@@ -20,6 +20,22 @@ Meta Cloud API ── webhook HTTPS ──► /api/whatsapp/webhook
                               Panel doctor/recepción
 ```
 
+## Aislamiento multiempresa
+
+```text
+Usuario autenticado
+        │
+        ▼
+Membresía + rol ──► Organización activa ──► Datos operativos
+                           │
+                           ├── Plan y límites
+                           ├── Horarios y sedes
+                           ├── Meta WhatsApp
+                           └── Consumo de IA
+```
+
+`clinics.id` se conserva como clave física de arrendatario para mantener compatibilidad. En la experiencia del producto se presenta como organización o negocio. Cada acción del servidor verifica la organización real del recurso y la membresía del usuario antes de leer o escribir.
+
 ## Principios
 
 1. La IA conversa; el backend decide y persiste.
@@ -29,6 +45,8 @@ Meta Cloud API ── webhook HTTPS ──► /api/whatsapp/webhook
 5. Los webhooks se procesan de forma idempotente usando el ID externo del mensaje.
 6. Las llaves permanecen en secretos del servidor.
 7. Se minimizan los datos personales enviados a proveedores externos.
+8. El número receptor de Meta determina la organización antes de procesar el mensaje.
+9. El consumo se registra por organización y se compara con el periodo y los límites del plan.
 
 ## Módulos
 
@@ -37,6 +55,7 @@ Meta Cloud API ── webhook HTTPS ──► /api/whatsapp/webhook
 - `app/actions.ts`: mutaciones autorizadas desde el panel.
 - `lib/assistant.ts`: orquestación OpenAI y fallback local.
 - `lib/dental-data.ts`: consultas y tipos del dominio.
+- `lib/saas.ts`: identidad, organizaciones, permisos, suscripciones y consumo.
 - `db/schema.ts`: modelo relacional.
 - `db/initialize.ts`: estructura y datos iniciales idempotentes.
 - `components/dental-dashboard.tsx`: superficie operativa completa.
@@ -51,7 +70,9 @@ La evolución recomendada es:
 - Cloud Tasks para trabajos asíncronos.
 - Cloud Scheduler para buscar recordatorios pendientes.
 - Cloud Logging y Error Reporting para observabilidad.
-- Firebase Authentication o Identity Platform para usuarios del consultorio.
+- Identity Platform para clientes finales si el producto deja el acceso privado de Sites.
 - Google Calendar API como sincronización opcional; la agenda interna sigue siendo la fuente oficial.
 
 Para evitar dobles reservaciones en PostgreSQL se debe agregar una restricción de exclusión sobre doctor y rango de tiempo, además de la validación de aplicación ya existente.
+
+Para cobro recurrente, el proveedor de pagos debe ser la fuente de verdad financiera. Sus webhooks actualizan `subscriptions`; el acceso de producto se decide con `status`, periodo y límites, nunca con datos enviados por el navegador.

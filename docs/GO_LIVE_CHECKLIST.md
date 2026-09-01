@@ -6,6 +6,17 @@
 - [ ] Definir políticas de cancelación, anticipos y tolerancia.
 - [ ] Aprobar respuestas frecuentes y mensajes de emergencia.
 - [ ] Definir quién recibe los escalamientos humanos.
+- [ ] Definir precios, impuestos, moneda, prueba y política de cancelación de cada plan.
+- [ ] Preparar términos de servicio, aviso de privacidad y contrato de encargado de datos.
+
+## Suscripción y acceso
+
+- [ ] Conectar proveedor de pagos y validar firma de todos sus webhooks.
+- [ ] Probar alta, renovación, pago rechazado, cancelación y reactivación.
+- [ ] Aplicar límites de plan con mensajes claros y sin perder datos.
+- [ ] Conectar correo transaccional para invitaciones y recuperación de acceso.
+- [ ] Reemplazar o ampliar el acceso privado actual para permitir clientes externos.
+- [ ] Confirmar que un usuario de una organización no puede consultar IDs de otra.
 
 ## Meta WhatsApp
 
@@ -21,6 +32,7 @@
 - [ ] Publicar aviso de privacidad y mecanismo de consentimiento.
 - [ ] Revisar el tratamiento de datos sensibles con asesoría legal mexicana.
 - [ ] Configurar roles para administradores, doctores y recepción.
+- [ ] Definir al menos dos administradores de plataforma y un proceso de recuperación.
 - [ ] Definir conservación, eliminación y atención de derechos ARCO.
 - [ ] Revisar retención y contrato de todos los proveedores.
 - [ ] Ejecutar respaldo y restauración de prueba.
@@ -34,3 +46,5 @@
 - [ ] Prueba de cancelación, reprogramación y toma humana.
 - [ ] Prueba de mensajes urgentes y límites médicos.
 - [ ] Piloto controlado con un consultorio y un número.
+- [ ] Prueba de aislamiento con al menos dos negocios, dos números y catálogos diferentes.
+- [ ] Prueba de límites mensuales y cambio de periodo de suscripción.

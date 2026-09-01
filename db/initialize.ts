@@ -12,6 +12,17 @@ const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL REFERENCES conversations(id), direction TEXT NOT NULL, author_type TEXT NOT NULL, body TEXT NOT NULL, external_id TEXT, created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS faq_items (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), question TEXT NOT NULL, answer TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)`,
   `CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), actor TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS saas_users (id TEXT PRIMARY KEY NOT NULL, email TEXT NOT NULL, full_name TEXT, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS memberships (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), user_id TEXT NOT NULL REFERENCES saas_users(id), role TEXT NOT NULL DEFAULT 'staff', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS platform_admins (user_id TEXT PRIMARY KEY NOT NULL REFERENCES saas_users(id), created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS organization_profiles (clinic_id TEXT PRIMARY KEY NOT NULL REFERENCES clinics(id), slug TEXT NOT NULL, business_type TEXT NOT NULL DEFAULT 'dental', vertical_template TEXT NOT NULL DEFAULT 'dental', brand_color TEXT NOT NULL DEFAULT '#2e9b7f', onboarding_status TEXT NOT NULL DEFAULT 'complete', updated_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS locations (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), name TEXT NOT NULL, address TEXT, timezone TEXT NOT NULL DEFAULT 'America/Mexico_City', phone TEXT, active INTEGER NOT NULL DEFAULT 1)`,
+  `CREATE TABLE IF NOT EXISTS business_hours (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), location_id TEXT REFERENCES locations(id), day_of_week INTEGER NOT NULL, opens_at TEXT NOT NULL, closes_at TEXT NOT NULL, break_start TEXT, break_end TEXT, active INTEGER NOT NULL DEFAULT 1)`,
+  `CREATE TABLE IF NOT EXISTS subscription_plans (id TEXT PRIMARY KEY NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL, description TEXT, price_cents INTEGER, max_users INTEGER NOT NULL, max_locations INTEGER NOT NULL, max_conversations INTEGER NOT NULL, max_ai_requests INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1)`,
+  `CREATE TABLE IF NOT EXISTS subscriptions (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), plan_id TEXT NOT NULL REFERENCES subscription_plans(id), status TEXT NOT NULL DEFAULT 'trialing', current_period_start TEXT NOT NULL, current_period_end TEXT NOT NULL, trial_ends_at TEXT, billing_provider TEXT, customer_reference TEXT, subscription_reference TEXT, updated_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS integration_connections (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), provider TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', external_account_id TEXT, phone_number_id TEXT, secret_reference TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS usage_events (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), metric TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 1, source_id TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS invitations (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), email TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'staff', status TEXT NOT NULL DEFAULT 'pending', token_hash TEXT, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_doctors_clinic_id ON doctors(clinic_id)`,
   `CREATE INDEX IF NOT EXISTS idx_services_clinic_active ON services(clinic_id, active)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_clinic_phone ON patients(clinic_id, phone)`,
@@ -23,6 +34,20 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_faq_clinic_active ON faq_items(clinic_id, active)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_clinic_created ON audit_logs(clinic_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_saas_users_email ON saas_users(email)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_memberships_clinic_user ON memberships(clinic_id, user_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_memberships_user_status ON memberships(user_id, status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_organization_profiles_slug ON organization_profiles(slug)`,
+  `CREATE INDEX IF NOT EXISTS idx_locations_clinic_active ON locations(clinic_id, active)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_business_hours_clinic_location_day ON business_hours(clinic_id, location_id, day_of_week)`,
+  `CREATE INDEX IF NOT EXISTS idx_business_hours_clinic_day ON business_hours(clinic_id, day_of_week)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_subscription_plans_slug ON subscription_plans(slug)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_clinic ON subscriptions(clinic_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_integrations_clinic_provider ON integration_connections(clinic_id, provider)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_integrations_phone_number_id ON integration_connections(phone_number_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_usage_clinic_metric_created ON usage_events(clinic_id, metric, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_source ON usage_events(source_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_invitations_clinic_status ON invitations(clinic_id, status)`,
 ];
 
 export function ensureDatabase(): Promise<void> {
@@ -33,39 +58,468 @@ export function ensureDatabase(): Promise<void> {
 async function initializeDatabase(): Promise<void> {
   const d1 = env.DB;
   await d1.batch(schemaStatements.map((statement) => d1.prepare(statement)));
-  const existing = await d1.prepare('SELECT id FROM clinics LIMIT 1').first<{ id: string }>();
-  if (existing) return;
+  const existing = await d1
+    .prepare('SELECT id FROM clinics LIMIT 1')
+    .first<{ id: string }>();
+  if (!existing) {
+    const inserts = [
+      d1
+        .prepare(
+          'INSERT INTO clinics (id, name, timezone, phone, address, currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'clinic_demo',
+          'Clínica Sonrisa',
+          'America/Mexico_City',
+          '+52 55 1234 5678',
+          'Av. Reforma 120, Ciudad de México',
+          'MXN',
+          '2026-08-01T15:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO doctors (id, clinic_id, name, email, specialty, color, active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'doctor_renata',
+          'clinic_demo',
+          'Dra. Renata Díaz',
+          'renata@clinicasonrisa.mx',
+          'Odontología general',
+          '#2e9b7f',
+          1,
+        ),
+      d1
+        .prepare(
+          'INSERT INTO doctors (id, clinic_id, name, email, specialty, color, active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'doctor_mateo',
+          'clinic_demo',
+          'Dr. Mateo Silva',
+          'mateo@clinicasonrisa.mx',
+          'Ortodoncia',
+          '#6474c6',
+          1,
+        ),
+      d1
+        .prepare(
+          'INSERT INTO services (id, clinic_id, name, category, description, duration_minutes, price_cents, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'service_cleaning',
+          'clinic_demo',
+          'Limpieza dental',
+          'Prevención',
+          'Profilaxis y eliminación de sarro superficial.',
+          45,
+          85000,
+          1,
+        ),
+      d1
+        .prepare(
+          'INSERT INTO services (id, clinic_id, name, category, description, duration_minutes, price_cents, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'service_checkup',
+          'clinic_demo',
+          'Revisión general',
+          'Diagnóstico',
+          'Valoración inicial y plan de tratamiento.',
+          30,
+          50000,
+          1,
+        ),
+      d1
+        .prepare(
+          'INSERT INTO services (id, clinic_id, name, category, description, duration_minutes, price_cents, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'service_ortho',
+          'clinic_demo',
+          'Valoración de ortodoncia',
+          'Ortodoncia',
+          'Evaluación de alineación, mordida y opciones de tratamiento.',
+          60,
+          70000,
+          1,
+        ),
+      d1
+        .prepare(
+          'INSERT INTO services (id, clinic_id, name, category, description, duration_minutes, price_cents, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'service_whitening',
+          'clinic_demo',
+          'Blanqueamiento',
+          'Estética',
+          'Sesión de blanqueamiento dental en consultorio.',
+          90,
+          280000,
+          1,
+        ),
+      d1
+        .prepare(
+          'INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'patient_mariana',
+          'clinic_demo',
+          'Mariana López',
+          '+52 55 1001 1001',
+          'mariana@example.com',
+          null,
+          '2026-02-15T17:00:00.000Z',
+          '2026-02-01T17:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'patient_carlos',
+          'clinic_demo',
+          'Carlos Méndez',
+          '+52 55 1002 1002',
+          'carlos@example.com',
+          'Interesado en alineadores.',
+          null,
+          '2026-08-30T16:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'patient_ana',
+          'clinic_demo',
+          'Ana Torres',
+          '+52 55 1003 1003',
+          'ana@example.com',
+          null,
+          '2025-12-10T18:00:00.000Z',
+          '2025-11-25T18:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'patient_luis',
+          'clinic_demo',
+          'Luis Hernández',
+          '+52 55 1004 1004',
+          null,
+          'Prefiere horarios por la tarde.',
+          '2026-07-20T22:00:00.000Z',
+          '2026-06-08T18:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'appt_1',
+          'clinic_demo',
+          'patient_mariana',
+          'doctor_renata',
+          'service_cleaning',
+          '2026-08-31T15:00:00.000Z',
+          '2026-08-31T15:45:00.000Z',
+          'confirmed',
+          'whatsapp',
+          null,
+          '2026-08-29T18:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'appt_2',
+          'clinic_demo',
+          'patient_carlos',
+          'doctor_mateo',
+          'service_ortho',
+          '2026-08-31T16:30:00.000Z',
+          '2026-08-31T17:30:00.000Z',
+          'pending',
+          'whatsapp',
+          'Primera valoración.',
+          '2026-08-30T17:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'appt_3',
+          'clinic_demo',
+          'patient_ana',
+          'doctor_renata',
+          'service_checkup',
+          '2026-08-31T18:00:00.000Z',
+          '2026-08-31T18:30:00.000Z',
+          'confirmed',
+          'manual',
+          null,
+          '2026-08-28T19:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'appt_4',
+          'clinic_demo',
+          'patient_luis',
+          'doctor_renata',
+          'service_whitening',
+          '2026-08-31T21:00:00.000Z',
+          '2026-08-31T22:30:00.000Z',
+          'confirmed',
+          'whatsapp',
+          null,
+          '2026-08-30T20:00:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO conversations (id, clinic_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'conv_mariana',
+          'clinic_demo',
+          'patient_mariana',
+          'whatsapp',
+          'open',
+          null,
+          0,
+          0,
+          '2026-08-31T14:40:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO conversations (id, clinic_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'conv_carlos',
+          'clinic_demo',
+          'patient_carlos',
+          'whatsapp',
+          'open',
+          null,
+          0,
+          2,
+          '2026-08-31T14:52:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO conversations (id, clinic_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'conv_ana',
+          'clinic_demo',
+          'patient_ana',
+          'whatsapp',
+          'open',
+          'Dra. Renata',
+          1,
+          1,
+          '2026-08-31T14:45:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'msg_1',
+          'conv_mariana',
+          'inbound',
+          'patient',
+          'Hola, ¿cuánto cuesta una limpieza y tienen horario mañana?',
+          null,
+          '2026-08-31T14:38:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'msg_2',
+          'conv_mariana',
+          'outbound',
+          'assistant',
+          'La limpieza tiene un costo de $850. Mañana tenemos disponibilidad a las 10:30 y 12:00. ¿Cuál horario prefieres?',
+          null,
+          '2026-08-31T14:38:05.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'msg_3',
+          'conv_mariana',
+          'inbound',
+          'patient',
+          'A las 10:30, por favor.',
+          null,
+          '2026-08-31T14:39:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'msg_4',
+          'conv_mariana',
+          'outbound',
+          'assistant',
+          'Perfecto, Mariana. Tu cita quedó confirmada. Te enviaremos un recordatorio un día antes.',
+          null,
+          '2026-08-31T14:40:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'msg_5',
+          'conv_carlos',
+          'inbound',
+          'patient',
+          '¿La valoración de ortodoncia incluye radiografías?',
+          null,
+          '2026-08-31T14:52:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'msg_6',
+          'conv_ana',
+          'inbound',
+          'patient',
+          'Necesito cambiar mi cita, ¿me puede ayudar alguien?',
+          null,
+          '2026-08-31T14:45:00.000Z',
+        ),
+      d1
+        .prepare(
+          'INSERT INTO faq_items (id, clinic_id, question, answer, active) VALUES (?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'faq_1',
+          'clinic_demo',
+          '¿Aceptan tarjeta?',
+          'Sí, aceptamos tarjetas de crédito, débito y transferencias.',
+          1,
+        ),
+      d1
+        .prepare(
+          'INSERT INTO faq_items (id, clinic_id, question, answer, active) VALUES (?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'faq_2',
+          'clinic_demo',
+          '¿Dónde están ubicados?',
+          'Estamos en Av. Reforma 120, Ciudad de México.',
+          1,
+        ),
+      d1
+        .prepare(
+          'INSERT INTO faq_items (id, clinic_id, question, answer, active) VALUES (?, ?, ?, ?, ?)',
+        )
+        .bind(
+          'faq_3',
+          'clinic_demo',
+          '¿Atienden urgencias?',
+          'Evaluamos urgencias dentales durante el horario de atención. Si existe sangrado severo, dificultad para respirar o un traumatismo importante, busca atención de emergencia inmediata.',
+          1,
+        ),
+    ];
+    await d1.batch(inserts);
+  }
 
-  const inserts = [
-    d1.prepare('INSERT INTO clinics (id, name, timezone, phone, address, currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('clinic_demo', 'Clínica Sonrisa', 'America/Mexico_City', '+52 55 1234 5678', 'Av. Reforma 120, Ciudad de México', 'MXN', '2026-08-01T15:00:00.000Z'),
-    d1.prepare('INSERT INTO doctors (id, clinic_id, name, email, specialty, color, active) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('doctor_renata', 'clinic_demo', 'Dra. Renata Díaz', 'renata@clinicasonrisa.mx', 'Odontología general', '#2e9b7f', 1),
-    d1.prepare('INSERT INTO doctors (id, clinic_id, name, email, specialty, color, active) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('doctor_mateo', 'clinic_demo', 'Dr. Mateo Silva', 'mateo@clinicasonrisa.mx', 'Ortodoncia', '#6474c6', 1),
-    d1.prepare('INSERT INTO services (id, clinic_id, name, category, description, duration_minutes, price_cents, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('service_cleaning', 'clinic_demo', 'Limpieza dental', 'Prevención', 'Profilaxis y eliminación de sarro superficial.', 45, 85000, 1),
-    d1.prepare('INSERT INTO services (id, clinic_id, name, category, description, duration_minutes, price_cents, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('service_checkup', 'clinic_demo', 'Revisión general', 'Diagnóstico', 'Valoración inicial y plan de tratamiento.', 30, 50000, 1),
-    d1.prepare('INSERT INTO services (id, clinic_id, name, category, description, duration_minutes, price_cents, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('service_ortho', 'clinic_demo', 'Valoración de ortodoncia', 'Ortodoncia', 'Evaluación de alineación, mordida y opciones de tratamiento.', 60, 70000, 1),
-    d1.prepare('INSERT INTO services (id, clinic_id, name, category, description, duration_minutes, price_cents, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('service_whitening', 'clinic_demo', 'Blanqueamiento', 'Estética', 'Sesión de blanqueamiento dental en consultorio.', 90, 280000, 1),
-    d1.prepare('INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('patient_mariana', 'clinic_demo', 'Mariana López', '+52 55 1001 1001', 'mariana@example.com', null, '2026-02-15T17:00:00.000Z', '2026-02-01T17:00:00.000Z'),
-    d1.prepare('INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('patient_carlos', 'clinic_demo', 'Carlos Méndez', '+52 55 1002 1002', 'carlos@example.com', 'Interesado en alineadores.', null, '2026-08-30T16:00:00.000Z'),
-    d1.prepare('INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('patient_ana', 'clinic_demo', 'Ana Torres', '+52 55 1003 1003', 'ana@example.com', null, '2025-12-10T18:00:00.000Z', '2025-11-25T18:00:00.000Z'),
-    d1.prepare('INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind('patient_luis', 'clinic_demo', 'Luis Hernández', '+52 55 1004 1004', null, 'Prefiere horarios por la tarde.', '2026-07-20T22:00:00.000Z', '2026-06-08T18:00:00.000Z'),
-    d1.prepare('INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind('appt_1', 'clinic_demo', 'patient_mariana', 'doctor_renata', 'service_cleaning', '2026-08-31T15:00:00.000Z', '2026-08-31T15:45:00.000Z', 'confirmed', 'whatsapp', null, '2026-08-29T18:00:00.000Z'),
-    d1.prepare('INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind('appt_2', 'clinic_demo', 'patient_carlos', 'doctor_mateo', 'service_ortho', '2026-08-31T16:30:00.000Z', '2026-08-31T17:30:00.000Z', 'pending', 'whatsapp', 'Primera valoración.', '2026-08-30T17:00:00.000Z'),
-    d1.prepare('INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind('appt_3', 'clinic_demo', 'patient_ana', 'doctor_renata', 'service_checkup', '2026-08-31T18:00:00.000Z', '2026-08-31T18:30:00.000Z', 'confirmed', 'manual', null, '2026-08-28T19:00:00.000Z'),
-    d1.prepare('INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind('appt_4', 'clinic_demo', 'patient_luis', 'doctor_renata', 'service_whitening', '2026-08-31T21:00:00.000Z', '2026-08-31T22:30:00.000Z', 'confirmed', 'whatsapp', null, '2026-08-30T20:00:00.000Z'),
-    d1.prepare('INSERT INTO conversations (id, clinic_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind('conv_mariana', 'clinic_demo', 'patient_mariana', 'whatsapp', 'open', null, 0, 0, '2026-08-31T14:40:00.000Z'),
-    d1.prepare('INSERT INTO conversations (id, clinic_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind('conv_carlos', 'clinic_demo', 'patient_carlos', 'whatsapp', 'open', null, 0, 2, '2026-08-31T14:52:00.000Z'),
-    d1.prepare('INSERT INTO conversations (id, clinic_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind('conv_ana', 'clinic_demo', 'patient_ana', 'whatsapp', 'open', 'Dra. Renata', 1, 1, '2026-08-31T14:45:00.000Z'),
-    d1.prepare('INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('msg_1', 'conv_mariana', 'inbound', 'patient', 'Hola, ¿cuánto cuesta una limpieza y tienen horario mañana?', null, '2026-08-31T14:38:00.000Z'),
-    d1.prepare('INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('msg_2', 'conv_mariana', 'outbound', 'assistant', 'La limpieza tiene un costo de $850. Mañana tenemos disponibilidad a las 10:30 y 12:00. ¿Cuál horario prefieres?', null, '2026-08-31T14:38:05.000Z'),
-    d1.prepare('INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('msg_3', 'conv_mariana', 'inbound', 'patient', 'A las 10:30, por favor.', null, '2026-08-31T14:39:00.000Z'),
-    d1.prepare('INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('msg_4', 'conv_mariana', 'outbound', 'assistant', 'Perfecto, Mariana. Tu cita quedó confirmada. Te enviaremos un recordatorio un día antes.', null, '2026-08-31T14:40:00.000Z'),
-    d1.prepare('INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('msg_5', 'conv_carlos', 'inbound', 'patient', '¿La valoración de ortodoncia incluye radiografías?', null, '2026-08-31T14:52:00.000Z'),
-    d1.prepare('INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind('msg_6', 'conv_ana', 'inbound', 'patient', 'Necesito cambiar mi cita, ¿me puede ayudar alguien?', null, '2026-08-31T14:45:00.000Z'),
-    d1.prepare('INSERT INTO faq_items (id, clinic_id, question, answer, active) VALUES (?, ?, ?, ?, ?)').bind('faq_1', 'clinic_demo', '¿Aceptan tarjeta?', 'Sí, aceptamos tarjetas de crédito, débito y transferencias.', 1),
-    d1.prepare('INSERT INTO faq_items (id, clinic_id, question, answer, active) VALUES (?, ?, ?, ?, ?)').bind('faq_2', 'clinic_demo', '¿Dónde están ubicados?', 'Estamos en Av. Reforma 120, Ciudad de México.', 1),
-    d1.prepare('INSERT INTO faq_items (id, clinic_id, question, answer, active) VALUES (?, ?, ?, ?, ?)').bind('faq_3', 'clinic_demo', '¿Atienden urgencias?', 'Evaluamos urgencias dentales durante el horario de atención. Si existe sangrado severo, dificultad para respirar o un traumatismo importante, busca atención de emergencia inmediata.', 1),
+  await seedSaasData(d1);
+  await d1.prepare('PRAGMA optimize').run();
+}
+
+async function seedSaasData(d1: typeof env.DB): Promise<void> {
+  const now = new Date().toISOString();
+  const periodEnd = new Date(
+    Date.now() + 30 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const demoClinic = await d1
+    .prepare(
+      "SELECT id, name, timezone, phone, address FROM clinics WHERE id = 'clinic_demo'",
+    )
+    .first<{
+      id: string;
+      name: string;
+      timezone: string;
+      phone: string | null;
+      address: string | null;
+    }>();
+
+  const statements = [
+    d1.prepare(
+      `INSERT OR IGNORE INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_trial', 'trial', 'Prueba', 'Plan de evaluación para validar la operación.', 0, 3, 1, 300, 500, 1)`,
+    ),
+    d1.prepare(
+      `INSERT OR IGNORE INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_professional', 'professional', 'Profesional', 'Para negocios con un equipo y automatización continua.', NULL, 10, 3, 3000, 5000, 1)`,
+    ),
+    d1.prepare(
+      `INSERT OR IGNORE INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_scale', 'scale', 'Escala', 'Para varias sedes, equipos y mayor volumen.', NULL, 50, 20, 25000, 50000, 1)`,
+    ),
   ];
 
-  await d1.batch(inserts);
-  await d1.prepare('PRAGMA optimize').run();
+  if (demoClinic) {
+    statements.push(
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO organization_profiles (clinic_id, slug, business_type, vertical_template, brand_color, onboarding_status, updated_at) VALUES ('clinic_demo', 'clinica-sonrisa', 'dental', 'dental', '#2e9b7f', 'complete', ?)`,
+        )
+        .bind(now),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO locations (id, clinic_id, name, address, timezone, phone, active) VALUES ('location_demo', 'clinic_demo', 'Consultorio principal', ?, ?, ?, 1)`,
+        )
+        .bind(demoClinic.address, demoClinic.timezone, demoClinic.phone),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO subscriptions (id, clinic_id, plan_id, status, current_period_start, current_period_end, trial_ends_at, billing_provider, customer_reference, subscription_reference, updated_at) VALUES ('subscription_demo', 'clinic_demo', 'plan_trial', 'trialing', ?, ?, ?, NULL, NULL, NULL, ?)`,
+        )
+        .bind(now, periodEnd, periodEnd, now),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES ('integration_demo_openai', 'clinic_demo', 'openai', 'pending', NULL, NULL, NULL, ?, ?)`,
+        )
+        .bind(now, now),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES ('integration_demo_whatsapp', 'clinic_demo', 'whatsapp', 'pending', NULL, NULL, NULL, ?, ?)`,
+        )
+        .bind(now, now),
+    );
+    for (let day = 0; day <= 6; day += 1) {
+      const saturday = day === 6;
+      const sunday = day === 0;
+      statements.push(
+        d1
+          .prepare(
+            `INSERT OR IGNORE INTO business_hours (id, clinic_id, location_id, day_of_week, opens_at, closes_at, break_start, break_end, active) VALUES (?, 'clinic_demo', 'location_demo', ?, '09:00', ?, NULL, NULL, ?)`,
+          )
+          .bind(
+            `hours_demo_${day}`,
+            day,
+            saturday ? '14:00' : '19:00',
+            sunday ? 0 : 1,
+          ),
+      );
+    }
+  }
+
+  await d1.batch(statements);
 }
