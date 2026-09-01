@@ -14,6 +14,7 @@ import {
   Clock3,
   FileText,
   MessageCircle,
+  Megaphone,
   MoreHorizontal,
   Plus,
   Search,
@@ -27,11 +28,14 @@ import {
   Users,
   Wifi,
   WifiOff,
+  Zap,
 } from 'lucide-react';
 
 import {
   createAppointment,
+  createLocation,
   createOrganization,
+  createProfessional,
   createService,
   inviteMember,
   markConversationRead,
@@ -44,6 +48,15 @@ import {
   updateOrganizationProfile,
   type ActionResult,
 } from '@/app/actions';
+import {
+  addWaitlistEntry,
+  createReactivationCampaign,
+  requestAppointmentDeposit,
+  runAutomationsNow,
+  setWaitlistStatus,
+  updateAutomationRule,
+  verifyAppointmentDeposit,
+} from '@/app/commercial-actions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -91,6 +104,7 @@ type View =
   | 'inbox'
   | 'patients'
   | 'services'
+  | 'automation'
   | 'analytics'
   | 'settings'
   | 'platform';
@@ -104,6 +118,7 @@ const navigation: Array<{
   { id: 'inbox', label: 'Bandeja', icon: MessageCircle },
   { id: 'patients', label: 'Pacientes', icon: Users },
   { id: 'services', label: 'Servicios', icon: Stethoscope },
+  { id: 'automation', label: 'Automatización', icon: Zap },
   { id: 'analytics', label: 'Analítica', icon: BarChart3 },
   { id: 'settings', label: 'Configuración', icon: Settings2 },
   { id: 'platform', label: 'Plataforma', icon: Building2 },
@@ -194,7 +209,7 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
               value={data.clinic.id}
               onChange={(event) =>
                 router.push(
-                  `/?organization=${encodeURIComponent(event.target.value)}`,
+                  `/app?organization=${encodeURIComponent(event.target.value)}`,
                 )
               }
               className="w-full bg-background"
@@ -264,7 +279,7 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
               value={data.clinic.id}
               onChange={(event) =>
                 router.push(
-                  `/?organization=${encodeURIComponent(event.target.value)}`,
+                  `/app?organization=${encodeURIComponent(event.target.value)}`,
                 )
               }
               className="hidden max-w-[180px] sm:block lg:hidden"
@@ -339,6 +354,13 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
               />
             ) : null}
             {view === 'analytics' ? <AnalyticsView data={data} /> : null}
+            {view === 'automation' ? (
+              <CommercialView
+                data={data}
+                runAction={runAction}
+                isPending={isPending || !canManage}
+              />
+            ) : null}
             {view === 'settings' ? (
               <SettingsView
                 data={data}
@@ -398,11 +420,11 @@ function Brand({
         <Sparkles className="size-5" />
       </div>
       {compact ? (
-        <span className="font-heading text-lg font-bold">Dento AI</span>
+        <span className="font-heading text-lg font-bold">Asistente H</span>
       ) : (
         <div>
           <p className="font-heading text-lg font-bold tracking-[-0.03em]">
-            Dento AI
+            Asistente H
           </p>
           <p className="text-xs text-muted-foreground">{clinicName}</p>
         </div>
@@ -919,10 +941,37 @@ function InboxView({
 
 function PatientsView({ data }: { data: DashboardData }) {
   const [query, setQuery] = useState('');
+  const [selectedPatientId, setSelectedPatientId] = useState(
+    data.patients[0]?.id ?? '',
+  );
   const patients = data.patients.filter((patient) =>
     `${patient.fullName} ${patient.phone} ${patient.email ?? ''}`
       .toLocaleLowerCase('es-MX')
       .includes(query.toLocaleLowerCase('es-MX')),
+  );
+  const selectedPatient = data.patients.find(
+    (patient) => patient.id === selectedPatientId,
+  );
+  const history = [
+    ...data.commercial.patientEvents
+      .filter((event) => event.patientId === selectedPatientId)
+      .map((event) => ({
+        id: event.id,
+        title: event.title,
+        detail: event.details,
+        createdAt: event.createdAt,
+      })),
+    ...data.appointments
+      .filter((appointment) => appointment.patientId === selectedPatientId)
+      .map((appointment) => ({
+        id: `appointment-${appointment.id}`,
+        title: `${appointment.serviceName} · ${statusLabels[appointment.status] ?? appointment.status}`,
+        detail: `Con ${appointment.doctorName}`,
+        createdAt: appointment.startsAt,
+      })),
+  ].sort(
+    (left, right) =>
+      new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
   );
   return (
     <>
@@ -965,6 +1014,7 @@ function PatientsView({ data }: { data: DashboardData }) {
                 <TableHead>Correo</TableHead>
                 <TableHead>Citas</TableHead>
                 <TableHead>Última visita</TableHead>
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -999,12 +1049,60 @@ function PatientsView({ data }: { data: DashboardData }) {
                       ? formatDate(patient.lastVisitAt)
                       : 'Paciente nuevo'}
                   </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant={
+                        selectedPatientId === patient.id ? 'secondary' : 'ghost'
+                      }
+                      onClick={() => setSelectedPatientId(patient.id)}
+                    >
+                      Historial
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
+      {selectedPatient ? (
+        <Card className="mt-5 border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
+          <CardHeader>
+            <CardTitle>Historial de {selectedPatient.fullName}</CardTitle>
+            <CardDescription>
+              Citas, cambios, lista de espera, anticipos y seguimientos.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {history.map((item) => (
+                <div key={item.id} className="flex gap-3 rounded-xl border p-3">
+                  <div className="mt-1 size-2 shrink-0 rounded-full bg-primary" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium">{item.title}</p>
+                      <span className="text-xs text-muted-foreground">
+                        {formatDate(item.createdAt)}
+                      </span>
+                    </div>
+                    {item.detail ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {item.detail}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+              {!history.length ? (
+                <p className="text-sm text-muted-foreground">
+                  Este paciente todavía no tiene actividad registrada.
+                </p>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
     </>
   );
 }
@@ -1194,6 +1292,509 @@ function AnalyticsView({ data }: { data: DashboardData }) {
   );
 }
 
+function CommercialView({
+  data,
+  runAction,
+  isPending,
+}: {
+  data: DashboardData;
+  runAction: (operation: () => Promise<ActionResult>) => void;
+  isPending: boolean;
+}) {
+  const [renderedAt] = useState(() => Date.now());
+  const upcomingAppointments = data.appointments.filter(
+    (item) =>
+      new Date(item.startsAt).getTime() > renderedAt &&
+      !['cancelled', 'completed'].includes(item.status),
+  );
+
+  function waitlistSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      addWaitlistEntry({
+        clinicId: data.clinic.id,
+        patientId: formText(form, 'patientId'),
+        serviceId: formText(form, 'serviceId'),
+        doctorId: formText(form, 'doctorId'),
+        dateFrom: formText(form, 'dateFrom'),
+        dateTo: formText(form, 'dateTo'),
+        preferredTime: formText(form, 'preferredTime'),
+        notes: formText(form, 'notes'),
+      }),
+    );
+  }
+
+  function campaignSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      createReactivationCampaign({
+        clinicId: data.clinic.id,
+        name: formText(form, 'name'),
+        template: formText(form, 'template'),
+        scheduledFor: formText(form, 'scheduledFor'),
+      }),
+    );
+  }
+
+  function depositSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      requestAppointmentDeposit({
+        appointmentId: formText(form, 'appointmentId'),
+        amountPesos: Number(formText(form, 'amountPesos')),
+        reference: formText(form, 'reference'),
+      }),
+    );
+  }
+
+  return (
+    <>
+      <PageHeading
+        eyebrow="Operación automática"
+        title="Automatización y crecimiento"
+        description="Recordatorios, lista de espera, reactivación, anticipos, encuestas y seguimiento desde un solo lugar."
+        action={
+          <Button
+            onClick={() => runAction(() => runAutomationsNow(data.clinic.id))}
+            disabled={isPending}
+          >
+            <Zap data-icon="inline-start" />
+            Procesar pendientes
+          </Button>
+        }
+      />
+
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric
+          value={String(data.commercial.scheduledPending)}
+          label="Mensajes programados"
+          detail="Recordatorios y seguimientos"
+        />
+        <Metric
+          value={String(
+            data.commercial.waitlist.filter((item) => item.status === 'waiting')
+              .length,
+          )}
+          label="Lista de espera"
+          detail="Pacientes disponibles"
+        />
+        <Metric
+          value={`${data.commercial.surveysAnswered}/${data.commercial.surveysSent}`}
+          label="Encuestas respondidas"
+          detail="Seguimiento de satisfacción"
+        />
+        <Metric
+          value={
+            data.commercial.averageScore === null
+              ? '—'
+              : `${Number(data.commercial.averageScore).toFixed(1)}/5`
+          }
+          label="Satisfacción"
+          detail="Promedio de respuestas"
+        />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Card className="border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
+          <CardHeader>
+            <CardTitle>Reglas de WhatsApp</CardTitle>
+            <CardDescription>
+              Se crean al confirmar una cita y se envían cuando corresponde.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {data.commercial.automationRules.map((rule) => (
+              <AutomationRuleEditor
+                key={rule.id}
+                rule={rule}
+                clinicId={data.clinic.id}
+                runAction={runAction}
+                disabled={isPending}
+              />
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
+          <CardHeader>
+            <CardTitle>Calendario y reportes</CardTitle>
+            <CardDescription>
+              Exportaciones compatibles con Excel y Google Calendar.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-xl border bg-muted/30 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-medium">Google Calendar</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {data.integration.googleCalendarConfigured
+                      ? 'Conexión OAuth activa.'
+                      : 'Exportación disponible; la sincronización OAuth requiere credenciales de Google.'}
+                  </p>
+                </div>
+                <Badge
+                  variant={
+                    data.integration.googleCalendarConfigured
+                      ? 'default'
+                      : 'secondary'
+                  }
+                >
+                  {data.integration.googleCalendarConfigured
+                    ? 'Conectado'
+                    : 'Preparado'}
+                </Badge>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <a
+                href={`/api/export/appointments?clinicId=${encodeURIComponent(data.clinic.id)}`}
+                className="inline-flex h-10 items-center justify-center rounded-lg border bg-background px-4 text-sm font-medium hover:bg-muted"
+              >
+                <FileText className="mr-2 size-4" /> Exportar citas CSV
+              </a>
+              <a
+                href={`/api/export/calendar?clinicId=${encodeURIComponent(data.clinic.id)}`}
+                className="inline-flex h-10 items-center justify-center rounded-lg border bg-background px-4 text-sm font-medium hover:bg-muted"
+              >
+                <CalendarDays className="mr-2 size-4" /> Descargar calendario
+              </a>
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Notificaciones al personal
+              </p>
+              {data.commercial.notifications.length ? (
+                data.commercial.notifications.slice(0, 4).map((item) => (
+                  <div key={item.id} className="rounded-lg bg-muted/40 p-3">
+                    <p className="text-sm font-medium">{item.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {item.body}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No hay incidencias pendientes.
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
+          <CardHeader>
+            <CardTitle>Lista de espera</CardTitle>
+            <CardDescription>
+              Registra preferencias para cubrir espacios cancelados.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <form
+              onSubmit={waitlistSubmit}
+              className="grid gap-3 sm:grid-cols-2"
+            >
+              <NativeSelect name="patientId" required className="w-full">
+                <NativeSelectOption value="">Paciente</NativeSelectOption>
+                {data.patients.map((patient) => (
+                  <NativeSelectOption key={patient.id} value={patient.id}>
+                    {patient.fullName}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <NativeSelect name="serviceId" className="w-full">
+                <NativeSelectOption value="">
+                  Cualquier servicio
+                </NativeSelectOption>
+                {data.services.map((service) => (
+                  <NativeSelectOption key={service.id} value={service.id}>
+                    {service.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <NativeSelect name="doctorId" className="w-full">
+                <NativeSelectOption value="">
+                  Cualquier profesional
+                </NativeSelectOption>
+                {data.doctors.map((doctor) => (
+                  <NativeSelectOption key={doctor.id} value={doctor.id}>
+                    {doctor.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <Input
+                name="preferredTime"
+                type="time"
+                aria-label="Horario preferido"
+              />
+              <Input name="dateFrom" type="date" aria-label="Fecha inicial" />
+              <Input name="dateTo" type="date" aria-label="Fecha final" />
+              <Textarea
+                name="notes"
+                placeholder="Preferencias adicionales"
+                className="sm:col-span-2"
+              />
+              <Button
+                type="submit"
+                disabled={isPending}
+                className="sm:col-span-2"
+              >
+                <Plus data-icon="inline-start" /> Agregar a espera
+              </Button>
+            </form>
+            <div className="space-y-2 border-t pt-4">
+              {data.commercial.waitlist.slice(0, 8).map((item) => (
+                <div
+                  key={item.id}
+                  className="flex flex-col gap-3 rounded-xl border p-3 sm:flex-row sm:items-center"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">{item.patientName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {item.serviceName ?? 'Cualquier servicio'} ·{' '}
+                      {item.preferredDateFrom ?? 'Fecha flexible'}{' '}
+                      {item.preferredTime ? `· ${item.preferredTime}` : ''}
+                    </p>
+                  </div>
+                  <NativeSelect
+                    value={item.status}
+                    onChange={(event) =>
+                      runAction(() =>
+                        setWaitlistStatus(
+                          item.id,
+                          event.target.value as
+                            | 'waiting'
+                            | 'contacted'
+                            | 'booked'
+                            | 'closed',
+                        ),
+                      )
+                    }
+                    disabled={isPending}
+                  >
+                    <NativeSelectOption value="waiting">
+                      En espera
+                    </NativeSelectOption>
+                    <NativeSelectOption value="contacted">
+                      Contactado
+                    </NativeSelectOption>
+                    <NativeSelectOption value="booked">
+                      Agendado
+                    </NativeSelectOption>
+                    <NativeSelectOption value="closed">
+                      Cerrado
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </div>
+              ))}
+              {!data.commercial.waitlist.length ? (
+                <p className="text-sm text-muted-foreground">
+                  Todavía no hay personas en espera.
+                </p>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
+          <CardHeader>
+            <CardTitle>Campañas de reactivación</CardTitle>
+            <CardDescription>
+              Programa un mensaje para pacientes sin visita en 180 días.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <form onSubmit={campaignSubmit} className="space-y-3">
+              <Input name="name" placeholder="Nombre de la campaña" required />
+              <Textarea
+                name="template"
+                defaultValue="Hola {{patient_name}}, en {{business_name}} queremos saber cómo te encuentras. ¿Deseas que te ayudemos a agendar una nueva cita?"
+                required
+              />
+              <Input
+                name="scheduledFor"
+                type="datetime-local"
+                defaultValue={defaultAppointmentDate(data.clinic.timezone)}
+                required
+              />
+              <Button type="submit" disabled={isPending}>
+                <Megaphone data-icon="inline-start" /> Programar campaña
+              </Button>
+            </form>
+            <div className="space-y-2 border-t pt-4">
+              {data.commercial.campaigns.slice(0, 5).map((campaign) => (
+                <div
+                  key={campaign.id}
+                  className="flex items-center gap-3 rounded-lg bg-muted/40 p-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {campaign.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {campaign.recipients} destinatarios · {campaign.sent}{' '}
+                      enviados
+                    </p>
+                  </div>
+                  <Badge variant="secondary">{campaign.status}</Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)] xl:col-span-2">
+          <CardHeader>
+            <CardTitle>Anticipos por transferencia</CardTitle>
+            <CardDescription>
+              Solicita un monto y verifica manualmente cuando llegue la
+              transferencia.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <form
+              onSubmit={depositSubmit}
+              className="grid gap-3 md:grid-cols-[2fr_1fr_1fr_auto]"
+            >
+              <NativeSelect name="appointmentId" required className="w-full">
+                <NativeSelectOption value="">
+                  Selecciona una cita
+                </NativeSelectOption>
+                {upcomingAppointments.map((appointment) => (
+                  <NativeSelectOption
+                    key={appointment.id}
+                    value={appointment.id}
+                  >
+                    {appointment.patientName} ·{' '}
+                    {formatDate(appointment.startsAt)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <Input
+                name="amountPesos"
+                type="number"
+                min="1"
+                placeholder="Monto MXN"
+                required
+              />
+              <Input name="reference" placeholder="Referencia" />
+              <Button type="submit" disabled={isPending}>
+                Solicitar
+              </Button>
+            </form>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Paciente</TableHead>
+                  <TableHead>Cita</TableHead>
+                  <TableHead>Monto</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.commercial.deposits.map((deposit) => (
+                  <TableRow key={deposit.id}>
+                    <TableCell>{deposit.patientName}</TableCell>
+                    <TableCell>{formatDate(deposit.startsAt)}</TableCell>
+                    <TableCell>{money(deposit.amountCents)}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          deposit.status === 'paid' ? 'default' : 'secondary'
+                        }
+                      >
+                        {deposit.status === 'paid' ? 'Recibido' : 'Solicitado'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {deposit.status !== 'paid' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isPending}
+                          onClick={() =>
+                            runAction(() =>
+                              verifyAppointmentDeposit(deposit.appointmentId),
+                            )
+                          }
+                        >
+                          Verificar
+                        </Button>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  );
+}
+
+function AutomationRuleEditor({
+  rule,
+  clinicId,
+  runAction,
+  disabled,
+}: {
+  rule: DashboardData['commercial']['automationRules'][number];
+  clinicId: string;
+  runAction: (operation: () => Promise<ActionResult>) => void;
+  disabled: boolean;
+}) {
+  const [enabled, setEnabled] = useState(rule.enabled === 1);
+
+  function submit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      updateAutomationRule({
+        clinicId,
+        kind: rule.kind,
+        enabled,
+        offsetMinutes: Number(formText(form, 'offsetMinutes')),
+        template: formText(form, 'template'),
+      }),
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="rounded-xl border p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="font-medium">{automationLabel(rule.kind)}</p>
+          <p className="text-xs text-muted-foreground">
+            Minutos relativos a la cita; negativos se envían antes.
+          </p>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={setEnabled}
+          disabled={disabled}
+        />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-[110px_1fr_auto]">
+        <Input
+          name="offsetMinutes"
+          type="number"
+          defaultValue={rule.offsetMinutes}
+          aria-label="Minutos relativos"
+        />
+        <Input name="template" defaultValue={rule.template} required />
+        <Button type="submit" variant="outline" disabled={disabled}>
+          Guardar
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function AutomationItem({
   icon: Icon,
   value,
@@ -1292,6 +1893,45 @@ function SettingsView({
         clinicId: data.clinic.id,
         provider: formText(form, 'provider') as 'openai' | 'gemini',
         externalAccountId: formText(form, 'externalAccountId'),
+      }),
+    );
+  }
+
+  function googleCalendarSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      saveIntegrationMetadata({
+        clinicId: data.clinic.id,
+        provider: 'google_calendar',
+        externalAccountId: formText(form, 'externalAccountId'),
+      }),
+    );
+  }
+
+  function locationSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      createLocation({
+        clinicId: data.clinic.id,
+        name: formText(form, 'name'),
+        address: formText(form, 'address'),
+        phone: formText(form, 'phone'),
+      }),
+    );
+  }
+
+  function professionalSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      createProfessional({
+        clinicId: data.clinic.id,
+        name: formText(form, 'name'),
+        email: formText(form, 'email'),
+        specialty: formText(form, 'specialty'),
+        locationId: formText(form, 'locationId'),
       }),
     );
   }
@@ -1431,15 +2071,40 @@ function SettingsView({
                   <div className="rounded-xl bg-muted p-3">
                     <p className="text-xs text-muted-foreground">Sedes</p>
                     <p className="mt-1 font-bold">
-                      1 / {subscription.plan.maxLocations}
+                      {data.locations.length} / {subscription.plan.maxLocations}
                     </p>
                   </div>
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  El cobro recurrente queda preparado en el modelo de datos;
-                  falta conectar el proveedor de pagos antes de vender los
-                  planes.
+                  La vigencia se activa cuando el administrador registra la
+                  transferencia y el folio de factura en su centro de control.
                 </p>
+                {data.saas.paymentHistory.length ? (
+                  <div className="space-y-2 border-t pt-4">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Pagos registrados
+                    </p>
+                    {data.saas.paymentHistory.slice(0, 3).map((payment) => (
+                      <div
+                        key={payment.id}
+                        className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 p-3 text-sm"
+                      >
+                        <div>
+                          <p className="font-medium">
+                            {money(payment.amountCents)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatDate(payment.receivedAt)} ·{' '}
+                            {payment.reference ?? 'Transferencia'}
+                          </p>
+                        </div>
+                        <Badge variant="outline">
+                          {payment.invoiceFolio ?? 'Sin folio'}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -1606,6 +2271,96 @@ function SettingsView({
 
         <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
           <CardHeader>
+            <CardTitle>Sucursales y profesionales</CardTitle>
+            <CardDescription>
+              Estructura la agenda del negocio sin mezclar sedes ni
+              responsables.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-2">
+              {data.locations.map((location) => (
+                <div
+                  key={location.id}
+                  className="flex items-center gap-3 rounded-xl border p-3"
+                >
+                  <Building2 className="size-4 text-primary" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{location.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {location.address ?? 'Sin dirección'}
+                    </p>
+                  </div>
+                  <Badge variant="outline">Activa</Badge>
+                </div>
+              ))}
+            </div>
+            {canManage ? (
+              <>
+                <form
+                  onSubmit={locationSubmit}
+                  className="grid gap-2 border-t pt-4 sm:grid-cols-2"
+                >
+                  <Input
+                    name="name"
+                    placeholder="Nombre de sucursal"
+                    required
+                  />
+                  <Input name="phone" placeholder="Teléfono" />
+                  <Input
+                    name="address"
+                    placeholder="Dirección"
+                    className="sm:col-span-2"
+                  />
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    disabled={isPending}
+                    className="sm:col-span-2"
+                  >
+                    Agregar sucursal
+                  </Button>
+                </form>
+                <form
+                  onSubmit={professionalSubmit}
+                  className="grid gap-2 border-t pt-4 sm:grid-cols-2"
+                >
+                  <Input
+                    name="name"
+                    placeholder="Nombre del profesional"
+                    required
+                  />
+                  <Input
+                    name="specialty"
+                    placeholder="Especialidad o función"
+                  />
+                  <Input name="email" type="email" placeholder="Correo" />
+                  <NativeSelect name="locationId" className="w-full">
+                    <NativeSelectOption value="">
+                      Sin sede fija
+                    </NativeSelectOption>
+                    {data.locations.map((location) => (
+                      <NativeSelectOption key={location.id} value={location.id}>
+                        {location.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    disabled={isPending}
+                    className="sm:col-span-2"
+                  >
+                    Agregar profesional
+                  </Button>
+                </form>
+              </>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+          <CardHeader>
             <CardTitle>Integraciones</CardTitle>
             <CardDescription>
               Cada negocio conecta sus propias cuentas; los secretos permanecen
@@ -1622,6 +2377,11 @@ function SettingsView({
               name="WhatsApp Cloud API"
               description="Número y cuenta empresarial de Meta"
               configured={data.integration.whatsappConfigured}
+            />
+            <IntegrationRow
+              name="Google Calendar"
+              description="Exportación activa y OAuth preparado"
+              configured={data.integration.googleCalendarConfigured}
             />
             <IntegrationRow
               name="Base de datos aislada"
@@ -1672,6 +2432,25 @@ function SettingsView({
                   <Button type="submit" variant="outline" disabled={isPending}>
                     Guardar identificadores
                   </Button>
+                </form>
+                <form
+                  onSubmit={googleCalendarSubmit}
+                  className="space-y-2 rounded-xl border p-3"
+                >
+                  <p className="text-sm font-semibold">Google Calendar</p>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <Input
+                      name="externalAccountId"
+                      placeholder="ID del calendario o correo de Google"
+                    />
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      disabled={isPending}
+                    >
+                      Guardar
+                    </Button>
+                  </div>
                 </form>
               </>
             ) : null}
@@ -1832,7 +2611,7 @@ function PlatformView({ data }: { data: DashboardData }) {
                       size="sm"
                       onClick={() =>
                         window.location.assign(
-                          `/?organization=${encodeURIComponent(organization.id)}`,
+                          `/app?organization=${encodeURIComponent(organization.id)}`,
                         )
                       }
                     >
@@ -2320,7 +3099,7 @@ function MobileNavigation({
     >
       {navigation
         .filter((item) =>
-          ['agenda', 'inbox', 'patients', 'services', 'settings'].includes(
+          ['agenda', 'inbox', 'patients', 'automation', 'settings'].includes(
             item.id,
           ),
         )
@@ -2374,6 +3153,18 @@ function roleLabel(role?: string) {
         viewer: 'Solo lectura',
       } as Record<string, string>
     )[role ?? ''] ?? 'Administrador'
+  );
+}
+function automationLabel(kind: string) {
+  return (
+    (
+      {
+        reminder_24h: 'Recordatorio 24 horas antes',
+        reminder_2h: 'Recordatorio 2 horas antes',
+        follow_up: 'Seguimiento después de la cita',
+        survey: 'Encuesta de satisfacción',
+      } as Record<string, string>
+    )[kind] ?? kind
   );
 }
 function dayLabel(day: number) {

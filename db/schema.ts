@@ -383,3 +383,351 @@ export const invitations = sqliteTable(
     index('idx_invitations_clinic_status').on(table.clinicId, table.status),
   ],
 );
+
+export const organizationStates = sqliteTable('organization_states', {
+  clinicId: text('clinic_id')
+    .primaryKey()
+    .references(() => clinics.id),
+  status: text('status').notNull().default('active'),
+  suspendedAt: text('suspended_at'),
+  suspensionReason: text('suspension_reason'),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const manualPayments = sqliteTable(
+  'manual_payments',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    amountCents: integer('amount_cents').notNull(),
+    currency: text('currency').notNull().default('MXN'),
+    periodStart: text('period_start').notNull(),
+    periodEnd: text('period_end').notNull(),
+    receivedAt: text('received_at').notNull(),
+    method: text('method').notNull().default('bank_transfer'),
+    reference: text('reference'),
+    invoiceFolio: text('invoice_folio'),
+    invoiceUrl: text('invoice_url'),
+    notes: text('notes'),
+    createdBy: text('created_by').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_manual_payments_clinic_received').on(
+      table.clinicId,
+      table.receivedAt,
+    ),
+  ],
+);
+
+export const subscriptionEvents = sqliteTable(
+  'subscription_events',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    action: text('action').notNull(),
+    previousValue: text('previous_value'),
+    nextValue: text('next_value'),
+    actor: text('actor').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_subscription_events_clinic_created').on(
+      table.clinicId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const doctorLocations = sqliteTable(
+  'doctor_locations',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    doctorId: text('doctor_id')
+      .notNull()
+      .references(() => doctors.id),
+    locationId: text('location_id')
+      .notNull()
+      .references(() => locations.id),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  },
+  (table) => [
+    uniqueIndex('idx_doctor_locations_unique').on(
+      table.doctorId,
+      table.locationId,
+    ),
+  ],
+);
+
+export const doctorHours = sqliteTable(
+  'doctor_hours',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    doctorId: text('doctor_id')
+      .notNull()
+      .references(() => doctors.id),
+    locationId: text('location_id').references(() => locations.id),
+    dayOfWeek: integer('day_of_week').notNull(),
+    opensAt: text('opens_at').notNull(),
+    closesAt: text('closes_at').notNull(),
+    active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  },
+  (table) => [
+    uniqueIndex('idx_doctor_hours_doctor_location_day').on(
+      table.doctorId,
+      table.locationId,
+      table.dayOfWeek,
+    ),
+    index('idx_doctor_hours_clinic_day').on(table.clinicId, table.dayOfWeek),
+  ],
+);
+
+export const waitlistEntries = sqliteTable(
+  'waitlist_entries',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    patientId: text('patient_id')
+      .notNull()
+      .references(() => patients.id),
+    serviceId: text('service_id').references(() => services.id),
+    doctorId: text('doctor_id').references(() => doctors.id),
+    preferredDateFrom: text('preferred_date_from'),
+    preferredDateTo: text('preferred_date_to'),
+    preferredTime: text('preferred_time'),
+    status: text('status').notNull().default('waiting'),
+    notes: text('notes'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('idx_waitlist_clinic_status_created').on(
+      table.clinicId,
+      table.status,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const automationRules = sqliteTable(
+  'automation_rules',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    kind: text('kind').notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    offsetMinutes: integer('offset_minutes').notNull().default(0),
+    template: text('template').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_automation_rules_clinic_kind').on(
+      table.clinicId,
+      table.kind,
+    ),
+  ],
+);
+
+export const scheduledMessages = sqliteTable(
+  'scheduled_messages',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    patientId: text('patient_id').references(() => patients.id),
+    appointmentId: text('appointment_id').references(() => appointments.id),
+    campaignId: text('campaign_id'),
+    kind: text('kind').notNull(),
+    channel: text('channel').notNull().default('whatsapp'),
+    recipient: text('recipient').notNull(),
+    body: text('body').notNull(),
+    scheduledFor: text('scheduled_for').notNull(),
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    sentAt: text('sent_at'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_scheduled_messages_status_time').on(
+      table.status,
+      table.scheduledFor,
+    ),
+  ],
+);
+
+export const campaigns = sqliteTable(
+  'campaigns',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    name: text('name').notNull(),
+    audience: text('audience').notNull().default('inactive_patients'),
+    template: text('template').notNull(),
+    status: text('status').notNull().default('draft'),
+    scheduledFor: text('scheduled_for'),
+    createdBy: text('created_by').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_campaigns_clinic_created').on(table.clinicId, table.createdAt),
+  ],
+);
+
+export const campaignRecipients = sqliteTable(
+  'campaign_recipients',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    campaignId: text('campaign_id')
+      .notNull()
+      .references(() => campaigns.id),
+    patientId: text('patient_id')
+      .notNull()
+      .references(() => patients.id),
+    status: text('status').notNull().default('queued'),
+    sentAt: text('sent_at'),
+  },
+  (table) => [
+    uniqueIndex('idx_campaign_recipients_unique').on(
+      table.campaignId,
+      table.patientId,
+    ),
+  ],
+);
+
+export const surveys = sqliteTable(
+  'surveys',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    patientId: text('patient_id')
+      .notNull()
+      .references(() => patients.id),
+    appointmentId: text('appointment_id').references(() => appointments.id),
+    score: integer('score'),
+    comment: text('comment'),
+    status: text('status').notNull().default('pending'),
+    sentAt: text('sent_at'),
+    respondedAt: text('responded_at'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_surveys_clinic_status').on(table.clinicId, table.status),
+  ],
+);
+
+export const staffNotifications = sqliteTable(
+  'staff_notifications',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    userId: text('user_id').references(() => saasUsers.id),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    entityType: text('entity_type'),
+    entityId: text('entity_id'),
+    readAt: text('read_at'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_staff_notifications_clinic_created').on(
+      table.clinicId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const depositRequests = sqliteTable(
+  'deposit_requests',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    appointmentId: text('appointment_id')
+      .notNull()
+      .references(() => appointments.id),
+    amountCents: integer('amount_cents').notNull(),
+    currency: text('currency').notNull().default('MXN'),
+    status: text('status').notNull().default('requested'),
+    reference: text('reference'),
+    requestedAt: text('requested_at').notNull(),
+    paidAt: text('paid_at'),
+    verifiedBy: text('verified_by'),
+  },
+  (table) => [
+    uniqueIndex('idx_deposit_requests_appointment').on(table.appointmentId),
+  ],
+);
+
+export const patientEvents = sqliteTable(
+  'patient_events',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    patientId: text('patient_id')
+      .notNull()
+      .references(() => patients.id),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    details: text('details'),
+    entityId: text('entity_id'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_patient_events_patient_created').on(
+      table.patientId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const supportSessions = sqliteTable(
+  'support_sessions',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    platformUserId: text('platform_user_id')
+      .notNull()
+      .references(() => saasUsers.id),
+    reason: text('reason').notNull(),
+    startedAt: text('started_at').notNull(),
+    expiresAt: text('expires_at').notNull(),
+    endedAt: text('ended_at'),
+  },
+  (table) => [
+    index('idx_support_sessions_clinic_active').on(
+      table.clinicId,
+      table.endedAt,
+    ),
+  ],
+);

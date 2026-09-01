@@ -1,4 +1,4 @@
-# Dento AI SaaS
+# Asistente H SaaS
 
 Base funcional multiempresa para vender recepción por WhatsApp e IA mediante suscripción. El primer vertical es dental, pero cada organización conserva su propia agenda, pacientes, catálogo, equipo, horarios, consumo e integraciones.
 
@@ -22,6 +22,11 @@ Base funcional multiempresa para vender recepción por WhatsApp e IA mediante su
 - Planes, periodos de prueba, límites de usuarios, sedes, conversaciones y solicitudes de IA.
 - Medición mensual de consumo y panel global para el administrador de la plataforma.
 - Configuración editable de datos, horarios, equipo e identificadores de integración.
+- Recordatorios, confirmación, cancelación, solicitud de reprogramación y seguimiento por WhatsApp.
+- Lista de espera, campañas de reactivación y encuestas de satisfacción.
+- Anticipos y pagos de suscripción por transferencia con verificación manual.
+- Historial unificado por paciente, notificaciones al personal y exportación CSV/iCalendar.
+- Centro de administración de organizaciones, planes, vigencias, suspensiones, transferencias y facturas.
 
 ## Ejecutar localmente
 
@@ -52,6 +57,16 @@ Nunca subas tokens o llaves al repositorio. En producción deben guardarse como 
 8. Configurar `META_APP_SECRET` para validar firmas.
 9. Crear y aprobar plantillas para confirmaciones y recordatorios fuera de la ventana de 24 horas.
 
+Para múltiples clientes se usa una sola aplicación de Meta de la plataforma con Embedded Signup. Cada negocio conserva su propio portafolio empresarial, cuenta de WhatsApp Business y número; no necesita una aplicación de desarrollador distinta. `phone_number_id` permite resolver el negocio correcto antes de leer o escribir datos. Los tokens por negocio deben almacenarse en Secret Manager antes de abrir el alta comercial.
+
+## Suscripciones por transferencia
+
+No se conecta una pasarela automática en esta etapa. El administrador de Asistente H registra cada transferencia, periodo cubierto, referencia, folio y enlace de factura. La misma operación activa o extiende la suscripción y deja bitácora. El cliente solo puede consultar su plan, consumo, vigencia e historial de pagos.
+
+## Automatizaciones
+
+El endpoint protegido `POST /api/jobs/automations` procesa mensajes vencidos. En producción debe ejecutarse periódicamente con Cloud Scheduler o Cloud Tasks enviando `Authorization: Bearer AUTOMATION_SECRET`.
+
 ## Integración de IA
 
 El asistente no tiene acceso directo para escribir libremente en la base de datos. La OpenAI Responses API solo puede solicitar herramientas tipadas:
@@ -80,16 +95,21 @@ El proyecto incluye esquema Drizzle, SQLite/D1 e inicialización idempotente. Ad
 - `organization_profiles`, `locations`, `business_hours`
 - `subscription_plans`, `subscriptions`, `usage_events`
 - `integration_connections`, `invitations`
+- `organization_states`, `manual_payments`, `subscription_events`
+- `automation_rules`, `scheduled_messages`, `waitlist_entries`
+- `campaigns`, `campaign_recipients`, `surveys`, `staff_notifications`
+- `deposit_requests`, `patient_events`, `doctor_locations`, `doctor_hours`
 
 La versión alojada usa D1 y acceso privado. Para una operación comercial en Google Cloud, el destino recomendado es Cloud Run + Cloud SQL PostgreSQL + Secret Manager. La estructura relacional y el campo interno `clinic_id` facilitan esa migración; en el producto representa el arrendatario u organización.
 
-## Pendientes antes de cobrar
+## Pendientes externos antes de cobrar
 
-- Conectar un proveedor de pagos recurrentes y webhooks de facturación.
 - Definir precios comerciales para los planes Profesional y Escala.
 - Conectar correo transaccional para invitaciones y notificaciones.
 - Cambiar la política de acceso privada por autenticación apta para clientes.
-- Llevar secretos por organización a Secret Manager si cada cliente usará sus propias credenciales; la alternativa recomendada es que la plataforma administre una cuenta de IA y facture el consumo.
+- Llevar tokens de Meta por organización a Secret Manager y completar Embedded Signup.
+- Configurar Cloud Scheduler para recordatorios y campañas.
+- Crear credenciales OAuth de Google si se desea sincronización directa; CSV e iCalendar ya funcionan sin ellas.
 
 ## Validación
 

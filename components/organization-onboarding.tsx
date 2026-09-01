@@ -43,7 +43,7 @@ export function OrganizationOnboarding({
       setResult(response);
       if (response.ok && response.organizationId)
         router.push(
-          `/?organization=${encodeURIComponent(response.organizationId)}`,
+          `/app?organization=${encodeURIComponent(response.organizationId)}`,
         );
     });
   }
@@ -57,7 +57,7 @@ export function OrganizationOnboarding({
               <Sparkles className="size-5" />
             </div>
             <div>
-              <p className="font-heading text-xl font-bold">Dento AI</p>
+              <p className="font-heading text-xl font-bold">Asistente H</p>
               <p className="text-xs text-muted-foreground">
                 Plataforma multiempresa
               </p>

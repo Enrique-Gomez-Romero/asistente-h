@@ -1,4 +1,4 @@
-# Arquitectura de Dento AI
+# Arquitectura de Asistente H
 
 ## Flujo principal
 
@@ -52,8 +52,13 @@ Membresía + rol ──► Organización activa ──► Datos operativos
 
 - `app/api/whatsapp/webhook`: verificación, firma, recepción y respuesta.
 - `app/api/assistant/simulate`: laboratorio seguro del asistente.
+- `app/api/jobs/automations`: ejecución protegida de recordatorios y campañas.
+- `app/api/export`: exportaciones CSV e iCalendar autorizadas por organización.
 - `app/actions.ts`: mutaciones autorizadas desde el panel.
+- `app/commercial-actions.ts`: cobranza manual y automatización comercial.
 - `lib/assistant.ts`: orquestación OpenAI y fallback local.
+- `lib/automations.ts`: cola, plantillas, reintentos y envíos programados.
+- `lib/whatsapp.ts`: envío resuelto por organización y número de Meta.
 - `lib/dental-data.ts`: consultas y tipos del dominio.
 - `lib/saas.ts`: identidad, organizaciones, permisos, suscripciones y consumo.
 - `db/schema.ts`: modelo relacional.
@@ -75,4 +80,6 @@ La evolución recomendada es:
 
 Para evitar dobles reservaciones en PostgreSQL se debe agregar una restricción de exclusión sobre doctor y rango de tiempo, además de la validación de aplicación ya existente.
 
-Para cobro recurrente, el proveedor de pagos debe ser la fuente de verdad financiera. Sus webhooks actualizan `subscriptions`; el acceso de producto se decide con `status`, periodo y límites, nunca con datos enviados por el navegador.
+En esta etapa la cobranza es manual. El administrador registra la transferencia y factura; esa operación actualiza `subscriptions`, conserva `manual_payments` y agrega `subscription_events`. Si después se conecta una pasarela, sus webhooks reemplazarán esta captura como fuente de verdad financiera sin cambiar el control de acceso.
+
+Para Meta multiempresa, cada cliente conserva su WABA y número. Una sola aplicación de desarrollador de Asistente H puede incorporarlos mediante Embedded Signup. Los identificadores no son secretos; los tokens se guardan por organización en Secret Manager y nunca en el navegador ni en D1.

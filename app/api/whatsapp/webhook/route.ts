@@ -3,7 +3,10 @@ import { NextResponse } from 'next/server';
 
 import { ensureDatabase } from '@/db/initialize';
 import { generateAssistantReply } from '@/lib/assistant';
+import { enqueueAppointmentAutomations } from '@/lib/automations';
+import { getAvailableSlots } from '@/lib/dental-data';
 import { recordUsage, resolveClinicByWhatsAppNumber } from '@/lib/saas';
+import { sendTenantWhatsAppText } from '@/lib/whatsapp';
 
 type WhatsAppMessage = {
   id?: string;
@@ -65,7 +68,6 @@ export async function POST(request: Request) {
           continue;
         await processIncomingMessage(
           clinicId,
-          phoneNumberId,
           message.from,
           contactName,
           message.text.body,
@@ -79,7 +81,6 @@ export async function POST(request: Request) {
 
 async function processIncomingMessage(
   clinicId: string,
-  phoneNumberId: string | undefined,
   phone: string,
   name: string,
   body: string,
@@ -148,53 +149,200 @@ async function processIncomingMessage(
   );
 
   if (conversation.botPaused) return;
+  const automaticReply = await processCommercialReply(
+    clinicId,
+    patient.id,
+    body,
+  );
+  if (automaticReply) {
+    await storeAndSendReply(clinicId, conversation.id, phone, automaticReply);
+    return;
+  }
   const assistant = await generateAssistantReply(body, clinicId);
+  await storeAndSendReply(clinicId, conversation.id, phone, assistant.reply);
+}
+
+async function storeAndSendReply(
+  clinicId: string,
+  conversationId: string,
+  phone: string,
+  body: string,
+) {
   const replyTime = new Date().toISOString();
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, 'outbound', 'assistant', ?, NULL, ?)`,
-    ).bind(
-      `msg_${crypto.randomUUID()}`,
-      conversation.id,
-      assistant.reply,
-      replyTime,
-    ),
+    ).bind(`msg_${crypto.randomUUID()}`, conversationId, body, replyTime),
     env.DB.prepare(
       'UPDATE conversations SET last_message_at = ? WHERE id = ?',
-    ).bind(replyTime, conversation.id),
+    ).bind(replyTime, conversationId),
   ]);
-  await sendWhatsAppText(phoneNumberId, phone, assistant.reply);
+  await sendTenantWhatsAppText(clinicId, phone, body);
 }
 
-async function sendWhatsAppText(
-  phoneNumberId: string | undefined,
-  phone: string,
+async function processCommercialReply(
+  clinicId: string,
+  patientId: string,
   body: string,
-) {
-  if (
-    !process.env.WHATSAPP_ACCESS_TOKEN ||
-    !process.env.WHATSAPP_PHONE_NUMBER_ID
+): Promise<string | null> {
+  const normalized = body
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+  if (/^[1-5]$/.test(normalized)) {
+    const survey = await env.DB.prepare(
+      `SELECT id FROM surveys WHERE clinic_id = ? AND patient_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
+    )
+      .bind(clinicId, patientId)
+      .first<{ id: string }>();
+    if (survey) {
+      await env.DB.prepare(
+        `UPDATE surveys SET score = ?, status = 'responded', responded_at = ? WHERE id = ? AND clinic_id = ?`,
+      )
+        .bind(Number(normalized), new Date().toISOString(), survey.id, clinicId)
+        .run();
+      return '¡Gracias por compartir tu experiencia! Tu respuesta quedó registrada.';
+    }
+  }
+
+  const intent = normalized.includes('reprogram')
+    ? 'reschedule'
+    : normalized.includes('cancel')
+      ? 'cancel'
+      : /^(confirmar|confirmo|si|sí)$/.test(normalized)
+        ? 'confirm'
+        : null;
+  if (!intent) return null;
+  const appointment = await env.DB.prepare(
+    `SELECT id, doctor_id AS doctorId, starts_at AS startsAt FROM appointments WHERE clinic_id = ? AND patient_id = ? AND starts_at >= ? AND status IN ('pending', 'confirmed') ORDER BY starts_at LIMIT 1`,
   )
-    return;
-  if (phoneNumberId && phoneNumberId !== process.env.WHATSAPP_PHONE_NUMBER_ID)
-    return;
-  const response = await fetch(
-    `https://graph.facebook.com/${process.env.WHATSAPP_GRAPH_VERSION ?? 'v23.0'}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: phone.replace(/\D/g, ''),
-        type: 'text',
-        text: { body },
-      }),
-    },
+    .bind(clinicId, patientId, new Date().toISOString())
+    .first<{ id: string; doctorId: string; startsAt: string }>();
+  if (!appointment)
+    return 'No encontré una cita próxima pendiente. El equipo revisará tu mensaje para ayudarte.';
+  const now = new Date().toISOString();
+  if (intent === 'confirm') {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE appointments SET status = 'confirmed' WHERE id = ? AND clinic_id = ?`,
+      ).bind(appointment.id, clinicId),
+      patientEvent(
+        clinicId,
+        patientId,
+        'Cita confirmada por WhatsApp',
+        appointment.id,
+        now,
+      ),
+    ]);
+    await enqueueAppointmentAutomations(clinicId, appointment.id);
+    return 'Tu cita quedó confirmada. Te enviaremos un recordatorio antes de tu visita.';
+  }
+  if (intent === 'cancel') {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE appointments SET status = 'cancelled' WHERE id = ? AND clinic_id = ?`,
+      ).bind(appointment.id, clinicId),
+      patientEvent(
+        clinicId,
+        patientId,
+        'Cita cancelada por WhatsApp',
+        appointment.id,
+        now,
+      ),
+      staffNotification(
+        clinicId,
+        'Cita cancelada por WhatsApp',
+        'Se liberó un espacio de agenda. Revisa la lista de espera.',
+        appointment.id,
+        now,
+      ),
+    ]);
+    return 'Tu cita quedó cancelada. Si deseas una nueva fecha, responde REPROGRAMAR.';
+  }
+
+  const clinic = await env.DB.prepare(
+    `SELECT timezone FROM clinics WHERE id = ?`,
+  )
+    .bind(clinicId)
+    .first<{ timezone: string }>();
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60_000);
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: clinic?.timezone ?? 'America/Mexico_City',
+  }).format(tomorrow);
+  const slots = await getAvailableSlots(clinicId, date, appointment.doctorId);
+  await env.DB.batch([
+    patientEvent(
+      clinicId,
+      patientId,
+      'Reprogramación solicitada por WhatsApp',
+      appointment.id,
+      now,
+    ),
+    staffNotification(
+      clinicId,
+      'Solicitud de reprogramación',
+      'Un paciente solicitó otra fecha desde WhatsApp.',
+      appointment.id,
+      now,
+    ),
+  ]);
+  if (!slots.length)
+    return 'Recibimos tu solicitud de reprogramación. El equipo te propondrá nuevos horarios.';
+  const options = slots
+    .slice(0, 3)
+    .map((slot, index) => `${index + 1}. ${formatSlot(slot, clinic?.timezone)}`)
+    .join('\n');
+  return `Puedo proponerte estos horarios:\n${options}\nResponde con tu opción y el equipo completará el cambio.`;
+}
+
+function patientEvent(
+  clinicId: string,
+  patientId: string,
+  title: string,
+  entityId: string,
+  createdAt: string,
+) {
+  return env.DB.prepare(
+    `INSERT INTO patient_events (id, clinic_id, patient_id, kind, title, details, entity_id, created_at) VALUES (?, ?, ?, 'appointment_status', ?, NULL, ?, ?)`,
+  ).bind(
+    `patient_event_${crypto.randomUUID()}`,
+    clinicId,
+    patientId,
+    title,
+    entityId,
+    createdAt,
   );
-  if (!response.ok) console.error('WhatsApp response failed', response.status);
+}
+
+function staffNotification(
+  clinicId: string,
+  title: string,
+  body: string,
+  entityId: string,
+  createdAt: string,
+) {
+  return env.DB.prepare(
+    `INSERT INTO staff_notifications (id, clinic_id, user_id, kind, title, body, entity_type, entity_id, read_at, created_at) VALUES (?, ?, NULL, 'appointment', ?, ?, 'appointment', ?, NULL, ?)`,
+  ).bind(
+    `notification_${crypto.randomUUID()}`,
+    clinicId,
+    title,
+    body,
+    entityId,
+    createdAt,
+  );
+}
+
+function formatSlot(value: string, timeZone = 'America/Mexico_City') {
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone,
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
 }
 
 async function verifySignature(

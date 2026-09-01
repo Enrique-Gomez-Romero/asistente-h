@@ -11,8 +11,9 @@
 
 ## Suscripción y acceso
 
-- [ ] Conectar proveedor de pagos y validar firma de todos sus webhooks.
-- [ ] Probar alta, renovación, pago rechazado, cancelación y reactivación.
+- [ ] Definir cuenta bancaria, instructivo de pago y proceso de conciliación.
+- [ ] Probar alta, renovación por transferencia, vencimiento, suspensión y reactivación.
+- [ ] Confirmar folio y enlace de factura en cada pago registrado.
 - [ ] Aplicar límites de plan con mensajes claros y sin perder datos.
 - [ ] Conectar correo transaccional para invitaciones y recuperación de acceso.
 - [ ] Reemplazar o ampliar el acceso privado actual para permitir clientes externos.
@@ -26,6 +27,7 @@
 - [ ] Suscribir mensajes y estados.
 - [ ] Aprobar plantillas de confirmación, recordatorio y reprogramación.
 - [ ] Probar la ventana de atención de 24 horas.
+- [ ] Completar Embedded Signup y guardar un token por negocio en Secret Manager.
 
 ## Seguridad y privacidad
 
@@ -48,3 +50,5 @@
 - [ ] Piloto controlado con un consultorio y un número.
 - [ ] Prueba de aislamiento con al menos dos negocios, dos números y catálogos diferentes.
 - [ ] Prueba de límites mensuales y cambio de periodo de suscripción.
+- [ ] Configurar Cloud Scheduler con `AUTOMATION_SECRET` y comprobar reintentos.
+- [ ] Probar CSV, iCalendar y, si se habilita, OAuth de Google Calendar.

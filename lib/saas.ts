@@ -34,6 +34,7 @@ export type SaasContext = {
   isPlatformAdmin: boolean;
   organizations: SaasOrganization[];
   activeOrganization: SaasOrganization | null;
+  accountStatus: string;
   subscription: null | {
     id: string;
     status: string;
@@ -73,6 +74,17 @@ export type SaasContext = {
     externalAccountId: string | null;
     phoneNumberId: string | null;
   }>;
+  paymentHistory: Array<{
+    id: string;
+    amountCents: number;
+    currency: string;
+    periodStart: string;
+    periodEnd: string;
+    receivedAt: string;
+    reference: string | null;
+    invoiceFolio: string | null;
+    invoiceUrl: string | null;
+  }>;
   platformStats: null | {
     organizations: number;
     users: number;
@@ -88,8 +100,8 @@ export async function getRequestUser(): Promise<ChatGPTUser | null> {
   return {
     userId: 'local_developer',
     email: 'desarrollo@dento-ai.local',
-    fullName: 'Equipo Dento AI',
-    displayName: 'Equipo Dento AI',
+    fullName: 'Equipo Asistente H',
+    displayName: 'Equipo Asistente H',
   };
 }
 
@@ -194,12 +206,14 @@ export async function getSaasContext(
       isPlatformAdmin,
       organizations: [],
       activeOrganization: null,
+      accountStatus: 'inactive',
       subscription: null,
       usage: { aiRequests: 0, conversations: 0 },
       members: [],
       invitations: [],
       hours: [],
       integrations: [],
+      paymentHistory: [],
       platformStats: isPlatformAdmin ? await getPlatformStats() : null,
     };
   }
@@ -215,6 +229,8 @@ export async function getSaasContext(
     invitations,
     hours,
     integrations,
+    accountState,
+    paymentHistory,
     platformStats,
   ] = await Promise.all([
     env.DB.prepare(
@@ -264,6 +280,24 @@ export async function getSaasContext(
         externalAccountId: string | null;
         phoneNumberId: string | null;
       }>(),
+    env.DB.prepare(`SELECT status FROM organization_states WHERE clinic_id = ?`)
+      .bind(clinicId)
+      .first<{ status: string }>(),
+    env.DB.prepare(
+      `SELECT id, amount_cents AS amountCents, currency, period_start AS periodStart, period_end AS periodEnd, received_at AS receivedAt, reference, invoice_folio AS invoiceFolio, invoice_url AS invoiceUrl FROM manual_payments WHERE clinic_id = ? ORDER BY received_at DESC LIMIT 24`,
+    )
+      .bind(clinicId)
+      .all<{
+        id: string;
+        amountCents: number;
+        currency: string;
+        periodStart: string;
+        periodEnd: string;
+        receivedAt: string;
+        reference: string | null;
+        invoiceFolio: string | null;
+        invoiceUrl: string | null;
+      }>(),
     isPlatformAdmin ? getPlatformStats() : Promise.resolve(null),
   ]);
   const usage = Object.fromEntries(
@@ -286,6 +320,7 @@ export async function getSaasContext(
     isPlatformAdmin,
     organizations: organizationList,
     activeOrganization,
+    accountStatus: accountState?.status ?? 'active',
     subscription: subscriptionRow
       ? {
           id: subscriptionRow.id,
@@ -313,6 +348,7 @@ export async function getSaasContext(
     invitations: invitations.results,
     hours: hours.results,
     integrations: integrationList,
+    paymentHistory: paymentHistory.results,
     platformStats,
   };
 }
@@ -344,7 +380,94 @@ export async function requireClinicAccess(
     .first<{ role: MembershipRole }>();
   if (!membership || !allowedRoles.includes(membership.role))
     throw new Error('No tienes permisos para realizar esta acción.');
+  const accountState = await env.DB.prepare(
+    `SELECT status FROM organization_states WHERE clinic_id = ?`,
+  )
+    .bind(clinicId)
+    .first<{ status: string }>();
+  if (accountState?.status === 'suspended')
+    throw new Error(
+      'La organización está suspendida. Contacta al administrador de la plataforma.',
+    );
   return { user, role: membership.role, isPlatformAdmin: false };
+}
+
+export type PlatformAdminData = {
+  user: ChatGPTUser;
+  stats: {
+    organizations: number;
+    users: number;
+    activeSubscriptions: number;
+    aiRequests: number;
+  };
+  plans: Array<{
+    id: string;
+    name: string;
+    slug: string;
+    maxUsers: number;
+    maxLocations: number;
+    maxConversations: number;
+    maxAiRequests: number;
+  }>;
+  organizations: Array<{
+    id: string;
+    name: string;
+    businessType: string;
+    accountStatus: string;
+    subscriptionStatus: string;
+    planId: string;
+    planName: string;
+    periodEnd: string;
+    users: number;
+    conversations: number;
+    aiRequests: number;
+    whatsappStatus: string;
+    createdAt: string;
+  }>;
+  recentPayments: Array<{
+    id: string;
+    clinicId: string;
+    clinicName: string;
+    amountCents: number;
+    currency: string;
+    receivedAt: string;
+    reference: string | null;
+    invoiceFolio: string | null;
+  }>;
+};
+
+export async function getPlatformAdminData(
+  user: ChatGPTUser,
+): Promise<PlatformAdminData> {
+  await ensureSaasUser(user);
+  const isAdmin = Boolean(
+    await env.DB.prepare(
+      'SELECT user_id FROM platform_admins WHERE user_id = ?',
+    )
+      .bind(user.userId)
+      .first(),
+  );
+  if (!isAdmin)
+    throw new Error('No tienes acceso a la administración de la plataforma.');
+  const [stats, plans, organizations, payments] = await Promise.all([
+    getPlatformStats(),
+    env.DB.prepare(
+      `SELECT id, name, slug, max_users AS maxUsers, max_locations AS maxLocations, max_conversations AS maxConversations, max_ai_requests AS maxAiRequests FROM subscription_plans WHERE active = 1 ORDER BY max_users`,
+    ).all<PlatformAdminData['plans'][number]>(),
+    env.DB.prepare(
+      `SELECT c.id, c.name, COALESCE(op.business_type, 'general') AS businessType, COALESCE(os.status, 'active') AS accountStatus, COALESCE(s.status, 'inactive') AS subscriptionStatus, COALESCE(p.id, '') AS planId, COALESCE(p.name, 'Sin plan') AS planName, COALESCE(s.current_period_end, '') AS periodEnd, (SELECT COUNT(*) FROM memberships m WHERE m.clinic_id = c.id AND m.status = 'active') AS users, (SELECT COUNT(*) FROM conversations cv WHERE cv.clinic_id = c.id) AS conversations, COALESCE((SELECT SUM(quantity) FROM usage_events u WHERE u.clinic_id = c.id AND u.metric = 'ai_request'), 0) AS aiRequests, COALESCE((SELECT status FROM integration_connections ic WHERE ic.clinic_id = c.id AND ic.provider = 'whatsapp'), 'pending') AS whatsappStatus, c.created_at AS createdAt FROM clinics c LEFT JOIN organization_profiles op ON op.clinic_id = c.id LEFT JOIN organization_states os ON os.clinic_id = c.id LEFT JOIN subscriptions s ON s.clinic_id = c.id LEFT JOIN subscription_plans p ON p.id = s.plan_id ORDER BY c.created_at DESC`,
+    ).all<PlatformAdminData['organizations'][number]>(),
+    env.DB.prepare(
+      `SELECT mp.id, mp.clinic_id AS clinicId, c.name AS clinicName, mp.amount_cents AS amountCents, mp.currency, mp.received_at AS receivedAt, mp.reference, mp.invoice_folio AS invoiceFolio FROM manual_payments mp JOIN clinics c ON c.id = mp.clinic_id ORDER BY mp.received_at DESC LIMIT 30`,
+    ).all<PlatformAdminData['recentPayments'][number]>(),
+  ]);
+  return {
+    user,
+    stats,
+    plans: plans.results,
+    organizations: organizations.results,
+    recentPayments: payments.results,
+  };
 }
 
 export async function recordUsage(

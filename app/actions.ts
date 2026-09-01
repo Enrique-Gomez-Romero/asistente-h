@@ -4,6 +4,7 @@ import { env } from 'cloudflare:workers';
 import { revalidatePath } from 'next/cache';
 
 import { ensureDatabase } from '@/db/initialize';
+import { enqueueAppointmentAutomations } from '@/lib/automations';
 import {
   ensureSaasUser,
   getRequestUser,
@@ -11,6 +12,7 @@ import {
   type BusinessHour,
   type MembershipRole,
 } from '@/lib/saas';
+import { sendTenantWhatsAppText } from '@/lib/whatsapp';
 
 export type ActionResult = {
   ok: boolean;
@@ -27,6 +29,14 @@ type AppointmentInput = {
   doctorId: string;
   startsAtLocal: string;
   notes?: string;
+};
+
+const statusLabelsForAudit: Record<string, string> = {
+  pending: 'pendiente',
+  confirmed: 'confirmada',
+  completed: 'completada',
+  cancelled: 'cancelada',
+  no_show: 'marcada como inasistencia',
 };
 
 export async function createAppointment(
@@ -136,9 +146,19 @@ export async function createAppointment(
         appointmentId,
         { patientName, startsAt: startsAt.toISOString() },
       ),
+      env.DB.prepare(
+        `INSERT INTO patient_events (id, clinic_id, patient_id, kind, title, details, entity_id, created_at) VALUES (?, ?, ?, 'appointment', 'Cita creada', ?, ?, ?)`,
+      ).bind(
+        `patient_event_${crypto.randomUUID()}`,
+        input.clinicId,
+        patientId,
+        JSON.stringify({ startsAt: startsAt.toISOString(), status: 'pending' }),
+        appointmentId,
+        now,
+      ),
     );
     await env.DB.batch(statements);
-    revalidatePath('/');
+    revalidatePath('/app');
     return {
       ok: true,
       message: 'Cita creada correctamente. Quedó pendiente de confirmación.',
@@ -163,21 +183,50 @@ export async function setAppointmentStatus(
     )
       throw new Error('Estado no permitido.');
     const entity = await env.DB.prepare(
-      'SELECT clinic_id AS clinicId FROM appointments WHERE id = ?',
+      'SELECT clinic_id AS clinicId, patient_id AS patientId, starts_at AS startsAt FROM appointments WHERE id = ?',
     )
       .bind(id)
-      .first<{ clinicId: string }>();
+      .first<{
+        clinicId: string;
+        patientId: string | null;
+        startsAt: string;
+      }>();
     if (!entity) throw new Error('No se encontró la cita.');
     const access = await requireClinicAccess(entity.clinicId, [
       'owner',
       'admin',
       'staff',
     ]);
-    const result = await env.DB.prepare(
-      'UPDATE appointments SET status = ? WHERE id = ? AND clinic_id = ?',
-    )
-      .bind(status, id, entity.clinicId)
-      .run();
+    const now = new Date().toISOString();
+    const statements = [
+      env.DB.prepare(
+        'UPDATE appointments SET status = ? WHERE id = ? AND clinic_id = ?',
+      ).bind(status, id, entity.clinicId),
+    ];
+    if (entity.patientId) {
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO patient_events (id, clinic_id, patient_id, kind, title, details, entity_id, created_at) VALUES (?, ?, ?, 'appointment_status', ?, ?, ?, ?)`,
+        ).bind(
+          `patient_event_${crypto.randomUUID()}`,
+          entity.clinicId,
+          entity.patientId,
+          `Cita ${statusLabelsForAudit[status] ?? status}`,
+          JSON.stringify({ status, startsAt: entity.startsAt }),
+          id,
+          now,
+        ),
+      );
+      if (status === 'completed') {
+        statements.push(
+          env.DB.prepare(
+            'UPDATE patients SET last_visit_at = ? WHERE id = ? AND clinic_id = ?',
+          ).bind(entity.startsAt, entity.patientId, entity.clinicId),
+        );
+      }
+    }
+    const results = await env.DB.batch(statements);
+    const result = results[0];
     if (!result.meta.changes) throw new Error('No se encontró la cita.');
     await logAudit(
       entity.clinicId,
@@ -187,7 +236,9 @@ export async function setAppointmentStatus(
       id,
       { status },
     );
-    revalidatePath('/');
+    if (status === 'confirmed' || status === 'completed')
+      await enqueueAppointmentAutomations(entity.clinicId, id);
+    revalidatePath('/app');
     return { ok: true, message: 'Estado de la cita actualizado.' };
   });
 }
@@ -229,8 +280,124 @@ export async function createService(input: {
     await logAudit(input.clinicId, access.user.email, 'create', 'service', id, {
       name: input.name,
     });
-    revalidatePath('/');
+    revalidatePath('/app');
     return { ok: true, message: 'Servicio agregado al catálogo.' };
+  });
+}
+
+export async function createLocation(input: {
+  clinicId: string;
+  name: string;
+  address?: string;
+  phone?: string;
+}): Promise<ActionResult> {
+  return actionResult(async () => {
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    if (input.name.trim().length < 2)
+      throw new Error('Escribe el nombre de la sucursal.');
+    const [subscription, total] = await Promise.all([
+      env.DB.prepare(
+        `SELECT p.max_locations AS maxLocations FROM subscriptions s JOIN subscription_plans p ON p.id = s.plan_id WHERE s.clinic_id = ?`,
+      )
+        .bind(input.clinicId)
+        .first<{ maxLocations: number }>(),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS total FROM locations WHERE clinic_id = ? AND active = 1`,
+      )
+        .bind(input.clinicId)
+        .first<{ total: number }>(),
+    ]);
+    if (subscription && (total?.total ?? 0) >= subscription.maxLocations)
+      throw new Error('El plan actual alcanzó su límite de sucursales.');
+    const id = `location_${crypto.randomUUID()}`;
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO locations (id, clinic_id, name, address, phone, active) VALUES (?, ?, ?, ?, ?, 1)`,
+      ).bind(
+        id,
+        input.clinicId,
+        input.name.trim(),
+        input.address?.trim() || null,
+        input.phone?.trim() || null,
+      ),
+      auditStatement(
+        input.clinicId,
+        access.user.email,
+        'create',
+        'location',
+        id,
+        {
+          name: input.name,
+        },
+      ),
+    ]);
+    revalidatePath('/app');
+    return { ok: true, message: 'Sucursal agregada.' };
+  });
+}
+
+export async function createProfessional(input: {
+  clinicId: string;
+  name: string;
+  email?: string;
+  specialty?: string;
+  locationId?: string;
+}): Promise<ActionResult> {
+  return actionResult(async () => {
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    if (input.name.trim().length < 3)
+      throw new Error('Escribe el nombre del profesional.');
+    if (input.locationId) {
+      const location = await env.DB.prepare(
+        `SELECT id FROM locations WHERE id = ? AND clinic_id = ? AND active = 1`,
+      )
+        .bind(input.locationId, input.clinicId)
+        .first();
+      if (!location) throw new Error('La sucursal seleccionada no es válida.');
+    }
+    const id = `professional_${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    const statements = [
+      env.DB.prepare(
+        `INSERT INTO doctors (id, clinic_id, name, email, specialty, color, active, created_at) VALUES (?, ?, ?, ?, ?, '#248a73', 1, ?)`,
+      ).bind(
+        id,
+        input.clinicId,
+        input.name.trim(),
+        input.email?.trim() || null,
+        input.specialty?.trim() || 'Profesional',
+        now,
+      ),
+      auditStatement(
+        input.clinicId,
+        access.user.email,
+        'create',
+        'professional',
+        id,
+        { name: input.name },
+      ),
+    ];
+    if (input.locationId) {
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO doctor_locations (id, clinic_id, doctor_id, location_id, active) VALUES (?, ?, ?, ?, 1)`,
+        ).bind(
+          `doctor_location_${crypto.randomUUID()}`,
+          input.clinicId,
+          id,
+          input.locationId,
+        ),
+      );
+    }
+    await env.DB.batch(statements);
+    revalidatePath('/app');
+    return { ok: true, message: 'Profesional agregado a la agenda.' };
   });
 }
 
@@ -262,7 +429,7 @@ export async function toggleService(
       id,
       { active },
     );
-    revalidatePath('/');
+    revalidatePath('/app');
     return {
       ok: true,
       message: active ? 'Servicio activado.' : 'Servicio pausado.',
@@ -304,7 +471,7 @@ export async function toggleBotPaused(
       conversationId,
       null,
     );
-    revalidatePath('/');
+    revalidatePath('/app');
     return {
       ok: true,
       message: paused
@@ -329,7 +496,7 @@ export async function markConversationRead(
   )
     .bind(conversationId, entity.clinicId)
     .run();
-  revalidatePath('/');
+  revalidatePath('/app');
 }
 
 export async function sendConversationMessage(
@@ -340,10 +507,10 @@ export async function sendConversationMessage(
     const message = body.trim();
     if (!message) throw new Error('Escribe un mensaje.');
     const conversation = await env.DB.prepare(
-      'SELECT id, clinic_id AS clinicId FROM conversations WHERE id = ?',
+      `SELECT c.id, c.clinic_id AS clinicId, p.phone FROM conversations c LEFT JOIN patients p ON p.id = c.patient_id WHERE c.id = ?`,
     )
       .bind(conversationId)
-      .first<{ id: string; clinicId: string }>();
+      .first<{ id: string; clinicId: string; phone: string | null }>();
     if (!conversation) throw new Error('No se encontró la conversación.');
     const access = await requireClinicAccess(conversation.clinicId, [
       'owner',
@@ -359,7 +526,12 @@ export async function sendConversationMessage(
         'UPDATE conversations SET last_message_at = ?, unread_count = 0 WHERE id = ? AND clinic_id = ?',
       ).bind(now, conversationId, conversation.clinicId),
     ]);
-    await sendWhatsAppText(conversation.clinicId, conversationId, message);
+    if (conversation.phone)
+      await sendTenantWhatsAppText(
+        conversation.clinicId,
+        conversation.phone,
+        message,
+      );
     await logAudit(
       conversation.clinicId,
       access.user.email,
@@ -368,7 +540,7 @@ export async function sendConversationMessage(
       conversationId,
       null,
     );
-    revalidatePath('/');
+    revalidatePath('/app');
     return { ok: true, message: 'Mensaje enviado.' };
   });
 }
@@ -391,6 +563,7 @@ export async function createOrganization(input: {
     const timezone = input.timezone?.trim() || 'America/Mexico_City';
     const id = `org_${crypto.randomUUID()}`;
     const locationId = `location_${crypto.randomUUID()}`;
+    const professionalId = `professional_${crypto.randomUUID()}`;
     const now = new Date().toISOString();
     const trialEnd = new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString();
     let slug = slugify(name) || id;
@@ -453,16 +626,65 @@ export async function createOrganization(input: {
         `INSERT INTO integration_connections (id, clinic_id, provider, status, created_at, updated_at) VALUES (?, ?, 'whatsapp', 'pending', ?, ?)`,
       ).bind(`integration_${crypto.randomUUID()}`, id, now, now),
       env.DB.prepare(
+        `INSERT INTO integration_connections (id, clinic_id, provider, status, created_at, updated_at) VALUES (?, ?, 'google_calendar', 'pending', ?, ?)`,
+      ).bind(`integration_${crypto.randomUUID()}`, id, now, now),
+      env.DB.prepare(
+        `INSERT INTO organization_states (clinic_id, status, suspended_at, suspension_reason, updated_at) VALUES (?, 'active', NULL, NULL, ?)`,
+      ).bind(id, now),
+      env.DB.prepare(
         `INSERT INTO doctors (id, clinic_id, name, email, specialty, color, active) VALUES (?, ?, ?, ?, ?, '#2e9b7f', 1)`,
       ).bind(
-        `professional_${crypto.randomUUID()}`,
+        professionalId,
         id,
         user.fullName || user.displayName,
         user.email,
         businessType === 'dental' ? 'Odontología general' : 'Profesional',
-        1,
+      ),
+      env.DB.prepare(
+        `INSERT INTO doctor_locations (id, clinic_id, doctor_id, location_id, active) VALUES (?, ?, ?, ?, 1)`,
+      ).bind(
+        `doctor_location_${crypto.randomUUID()}`,
+        id,
+        professionalId,
+        locationId,
       ),
     ];
+    const defaultAutomations = [
+      [
+        'reminder_24h',
+        -1440,
+        'Hola {{patient_name}}, te recordamos tu cita en {{business_name}} el {{appointment_date}}. Responde CONFIRMAR, CANCELAR o REPROGRAMAR.',
+      ],
+      [
+        'reminder_2h',
+        -120,
+        'Tu cita en {{business_name}} comienza en aproximadamente 2 horas. Si necesitas ayuda, responde a este mensaje.',
+      ],
+      [
+        'follow_up',
+        1440,
+        'Hola {{patient_name}}, esperamos que tu atención en {{business_name}} haya salido muy bien. ¿Hay algo en lo que podamos ayudarte?',
+      ],
+      [
+        'survey',
+        120,
+        '¿Cómo calificarías tu experiencia en {{business_name}} del 1 al 5? Responde solo con un número.',
+      ],
+    ] as const;
+    for (const [kind, offsetMinutes, template] of defaultAutomations) {
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO automation_rules (id, clinic_id, kind, enabled, offset_minutes, template, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)`,
+        ).bind(
+          `automation_${crypto.randomUUID()}`,
+          id,
+          kind,
+          offsetMinutes,
+          template,
+          now,
+        ),
+      );
+    }
     for (let day = 0; day <= 6; day += 1) {
       statements.push(
         env.DB.prepare(
@@ -478,7 +700,7 @@ export async function createOrganization(input: {
       );
     }
     await env.DB.batch(statements);
-    revalidatePath('/');
+    revalidatePath('/app');
     return {
       ok: true,
       message:
@@ -531,7 +753,7 @@ export async function updateOrganizationProfile(input: {
       input.clinicId,
       { name: input.name },
     );
-    revalidatePath('/');
+    revalidatePath('/app');
     return { ok: true, message: 'Datos del negocio actualizados.' };
   });
 }
@@ -580,7 +802,7 @@ export async function updateBusinessHours(
       clinicId,
       null,
     );
-    revalidatePath('/');
+    revalidatePath('/app');
     return {
       ok: true,
       message: 'Horarios actualizados. La IA ya usará esta disponibilidad.',
@@ -652,7 +874,7 @@ export async function inviteMember(input: {
       email,
       { role: input.role },
     );
-    revalidatePath('/');
+    revalidatePath('/app');
     return {
       ok: true,
       message: existingUser
@@ -664,7 +886,7 @@ export async function inviteMember(input: {
 
 export async function saveIntegrationMetadata(input: {
   clinicId: string;
-  provider: 'whatsapp' | 'openai' | 'gemini';
+  provider: 'whatsapp' | 'openai' | 'gemini' | 'google_calendar';
   externalAccountId?: string;
   phoneNumberId?: string;
 }): Promise<ActionResult> {
@@ -700,58 +922,13 @@ export async function saveIntegrationMetadata(input: {
       input.provider,
       { metadataReady: configured },
     );
-    revalidatePath('/');
+    revalidatePath('/app');
     return {
       ok: true,
       message:
         'Datos de integración guardados. Las llaves secretas se conectan desde el servidor.',
     };
   });
-}
-
-async function sendWhatsAppText(
-  clinicId: string,
-  conversationId: string,
-  body: string,
-): Promise<void> {
-  if (
-    !process.env.WHATSAPP_ACCESS_TOKEN ||
-    !process.env.WHATSAPP_PHONE_NUMBER_ID
-  )
-    return;
-  const patient = await env.DB.prepare(
-    `SELECT p.phone FROM conversations c JOIN patients p ON p.id = c.patient_id WHERE c.id = ? AND c.clinic_id = ?`,
-  )
-    .bind(conversationId, clinicId)
-    .first<{ phone: string }>();
-  const integration = await env.DB.prepare(
-    `SELECT phone_number_id AS phoneNumberId FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp'`,
-  )
-    .bind(clinicId)
-    .first<{ phoneNumberId: string | null }>();
-  if (
-    !patient ||
-    (integration?.phoneNumberId &&
-      integration.phoneNumberId !== process.env.WHATSAPP_PHONE_NUMBER_ID)
-  )
-    return;
-  const response = await fetch(
-    `https://graph.facebook.com/${process.env.WHATSAPP_GRAPH_VERSION ?? 'v23.0'}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: patient.phone.replace(/\D/g, ''),
-        type: 'text',
-        text: { body },
-      }),
-    },
-  );
-  if (!response.ok) console.error('WhatsApp send failed', response.status);
 }
 
 async function logAudit(

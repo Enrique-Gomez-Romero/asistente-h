@@ -23,6 +23,21 @@ const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS integration_connections (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), provider TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', external_account_id TEXT, phone_number_id TEXT, secret_reference TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS usage_events (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), metric TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 1, source_id TEXT, created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS invitations (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), email TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'staff', status TEXT NOT NULL DEFAULT 'pending', token_hash TEXT, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS organization_states (clinic_id TEXT PRIMARY KEY NOT NULL REFERENCES clinics(id), status TEXT NOT NULL DEFAULT 'active', suspended_at TEXT, suspension_reason TEXT, updated_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS manual_payments (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), amount_cents INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'MXN', period_start TEXT NOT NULL, period_end TEXT NOT NULL, received_at TEXT NOT NULL, method TEXT NOT NULL DEFAULT 'bank_transfer', reference TEXT, invoice_folio TEXT, invoice_url TEXT, notes TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS subscription_events (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), action TEXT NOT NULL, previous_value TEXT, next_value TEXT, actor TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS doctor_locations (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), doctor_id TEXT NOT NULL REFERENCES doctors(id), location_id TEXT NOT NULL REFERENCES locations(id), active INTEGER NOT NULL DEFAULT 1)`,
+  `CREATE TABLE IF NOT EXISTS doctor_hours (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), doctor_id TEXT NOT NULL REFERENCES doctors(id), location_id TEXT REFERENCES locations(id), day_of_week INTEGER NOT NULL, opens_at TEXT NOT NULL, closes_at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)`,
+  `CREATE TABLE IF NOT EXISTS waitlist_entries (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT NOT NULL REFERENCES patients(id), service_id TEXT REFERENCES services(id), doctor_id TEXT REFERENCES doctors(id), preferred_date_from TEXT, preferred_date_to TEXT, preferred_time TEXT, status TEXT NOT NULL DEFAULT 'waiting', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS automation_rules (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), kind TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, offset_minutes INTEGER NOT NULL DEFAULT 0, template TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT REFERENCES patients(id), appointment_id TEXT REFERENCES appointments(id), campaign_id TEXT, kind TEXT NOT NULL, channel TEXT NOT NULL DEFAULT 'whatsapp', recipient TEXT NOT NULL, body TEXT NOT NULL, scheduled_for TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, sent_at TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), name TEXT NOT NULL, audience TEXT NOT NULL DEFAULT 'inactive_patients', template TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', scheduled_for TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS campaign_recipients (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), campaign_id TEXT NOT NULL REFERENCES campaigns(id), patient_id TEXT NOT NULL REFERENCES patients(id), status TEXT NOT NULL DEFAULT 'queued', sent_at TEXT)`,
+  `CREATE TABLE IF NOT EXISTS surveys (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT NOT NULL REFERENCES patients(id), appointment_id TEXT REFERENCES appointments(id), score INTEGER, comment TEXT, status TEXT NOT NULL DEFAULT 'pending', sent_at TEXT, responded_at TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS staff_notifications (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), user_id TEXT REFERENCES saas_users(id), kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, entity_type TEXT, entity_id TEXT, read_at TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS deposit_requests (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), appointment_id TEXT NOT NULL REFERENCES appointments(id), amount_cents INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'MXN', status TEXT NOT NULL DEFAULT 'requested', reference TEXT, requested_at TEXT NOT NULL, paid_at TEXT, verified_by TEXT)`,
+  `CREATE TABLE IF NOT EXISTS patient_events (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT NOT NULL REFERENCES patients(id), kind TEXT NOT NULL, title TEXT NOT NULL, details TEXT, entity_id TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS support_sessions (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), platform_user_id TEXT NOT NULL REFERENCES saas_users(id), reason TEXT NOT NULL, started_at TEXT NOT NULL, expires_at TEXT NOT NULL, ended_at TEXT)`,
   `CREATE INDEX IF NOT EXISTS idx_doctors_clinic_id ON doctors(clinic_id)`,
   `CREATE INDEX IF NOT EXISTS idx_services_clinic_active ON services(clinic_id, active)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_patients_clinic_phone ON patients(clinic_id, phone)`,
@@ -48,6 +63,21 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_usage_clinic_metric_created ON usage_events(clinic_id, metric, created_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_source ON usage_events(source_id)`,
   `CREATE INDEX IF NOT EXISTS idx_invitations_clinic_status ON invitations(clinic_id, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_manual_payments_clinic_received ON manual_payments(clinic_id, received_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_subscription_events_clinic_created ON subscription_events(clinic_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_doctor_locations_unique ON doctor_locations(doctor_id, location_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_doctor_hours_doctor_location_day ON doctor_hours(doctor_id, location_id, day_of_week)`,
+  `CREATE INDEX IF NOT EXISTS idx_doctor_hours_clinic_day ON doctor_hours(clinic_id, day_of_week)`,
+  `CREATE INDEX IF NOT EXISTS idx_waitlist_clinic_status_created ON waitlist_entries(clinic_id, status, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_rules_clinic_kind ON automation_rules(clinic_id, kind)`,
+  `CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status_time ON scheduled_messages(status, scheduled_for)`,
+  `CREATE INDEX IF NOT EXISTS idx_campaigns_clinic_created ON campaigns(clinic_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_recipients_unique ON campaign_recipients(campaign_id, patient_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_surveys_clinic_status ON surveys(clinic_id, status)`,
+  `CREATE INDEX IF NOT EXISTS idx_staff_notifications_clinic_created ON staff_notifications(clinic_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_requests_appointment ON deposit_requests(appointment_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_patient_events_patient_created ON patient_events(patient_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_support_sessions_clinic_active ON support_sessions(clinic_id, ended_at)`,
 ];
 
 export function ensureDatabase(): Promise<void> {
@@ -502,6 +532,42 @@ async function seedSaasData(d1: typeof env.DB): Promise<void> {
           `INSERT OR IGNORE INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES ('integration_demo_whatsapp', 'clinic_demo', 'whatsapp', 'pending', NULL, NULL, NULL, ?, ?)`,
         )
         .bind(now, now),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO organization_states (clinic_id, status, suspended_at, suspension_reason, updated_at) VALUES ('clinic_demo', 'active', NULL, NULL, ?)`,
+        )
+        .bind(now),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES ('integration_demo_google_calendar', 'clinic_demo', 'google_calendar', 'pending', NULL, NULL, NULL, ?, ?)`,
+        )
+        .bind(now, now),
+      d1.prepare(
+        `INSERT OR IGNORE INTO doctor_locations (id, clinic_id, doctor_id, location_id, active) VALUES ('doctor_location_renata', 'clinic_demo', 'doctor_renata', 'location_demo', 1)`,
+      ),
+      d1.prepare(
+        `INSERT OR IGNORE INTO doctor_locations (id, clinic_id, doctor_id, location_id, active) VALUES ('doctor_location_mateo', 'clinic_demo', 'doctor_mateo', 'location_demo', 1)`,
+      ),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO automation_rules (id, clinic_id, kind, enabled, offset_minutes, template, updated_at) VALUES ('automation_demo_reminder_24h', 'clinic_demo', 'reminder_24h', 1, -1440, 'Hola {{patient_name}}, te recordamos tu cita en {{business_name}} el {{appointment_date}}. Responde CONFIRMAR, CANCELAR o REPROGRAMAR.', ?)`,
+        )
+        .bind(now),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO automation_rules (id, clinic_id, kind, enabled, offset_minutes, template, updated_at) VALUES ('automation_demo_reminder_2h', 'clinic_demo', 'reminder_2h', 1, -120, 'Tu cita en {{business_name}} comienza en aproximadamente 2 horas. Si necesitas ayuda, responde a este mensaje.', ?)`,
+        )
+        .bind(now),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO automation_rules (id, clinic_id, kind, enabled, offset_minutes, template, updated_at) VALUES ('automation_demo_follow_up', 'clinic_demo', 'follow_up', 1, 1440, 'Hola {{patient_name}}, esperamos que tu atención en {{business_name}} haya salido muy bien. ¿Hay algo en lo que podamos ayudarte?', ?)`,
+        )
+        .bind(now),
+      d1
+        .prepare(
+          `INSERT OR IGNORE INTO automation_rules (id, clinic_id, kind, enabled, offset_minutes, template, updated_at) VALUES ('automation_demo_survey', 'clinic_demo', 'survey', 1, 120, '¿Cómo calificarías tu experiencia en {{business_name}} del 1 al 5? Responde solo con un número.', ?)`,
+        )
+        .bind(now),
     );
     for (let day = 0; day <= 6; day += 1) {
       const saturday = day === 6;

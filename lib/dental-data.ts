@@ -89,6 +89,80 @@ export type FaqRecord = {
   active: number;
 };
 
+export type AutomationRuleRecord = {
+  id: string;
+  kind: string;
+  enabled: number;
+  offsetMinutes: number;
+  template: string;
+};
+
+export type WaitlistRecord = {
+  id: string;
+  patientName: string;
+  patientPhone: string;
+  serviceName: string | null;
+  doctorName: string | null;
+  preferredDateFrom: string | null;
+  preferredDateTo: string | null;
+  preferredTime: string | null;
+  status: string;
+  notes: string | null;
+  createdAt: string;
+};
+
+export type CampaignRecord = {
+  id: string;
+  name: string;
+  audience: string;
+  status: string;
+  scheduledFor: string | null;
+  createdAt: string;
+  recipients: number;
+  sent: number;
+};
+
+export type DepositRecord = {
+  id: string;
+  appointmentId: string;
+  patientName: string;
+  serviceName: string;
+  startsAt: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  reference: string | null;
+  requestedAt: string;
+  paidAt: string | null;
+};
+
+export type PatientEventRecord = {
+  id: string;
+  patientId: string;
+  kind: string;
+  title: string;
+  details: string | null;
+  entityId: string | null;
+  createdAt: string;
+};
+
+export type NotificationRecord = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  readAt: string | null;
+  createdAt: string;
+};
+
+export type LocationRecord = {
+  id: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  active: number;
+};
+
 export type DashboardData = {
   clinic: ClinicRecord;
   doctors: DoctorRecord[];
@@ -100,8 +174,22 @@ export type DashboardData = {
   integration: {
     openAiConfigured: boolean;
     whatsappConfigured: boolean;
+    googleCalendarConfigured: boolean;
     mode: 'demo' | 'production';
   };
+  commercial: {
+    automationRules: AutomationRuleRecord[];
+    waitlist: WaitlistRecord[];
+    campaigns: CampaignRecord[];
+    deposits: DepositRecord[];
+    patientEvents: PatientEventRecord[];
+    notifications: NotificationRecord[];
+    scheduledPending: number;
+    surveysSent: number;
+    surveysAnswered: number;
+    averageScore: number | null;
+  };
+  locations: LocationRecord[];
   saas: SaasContext;
 };
 
@@ -121,6 +209,15 @@ export async function getDashboardData(
     conversations,
     messages,
     faqs,
+    automationRules,
+    waitlist,
+    campaigns,
+    deposits,
+    patientEvents,
+    notifications,
+    scheduledSummary,
+    surveySummary,
+    locations,
   ] = await Promise.all([
     d1
       .prepare(
@@ -170,6 +267,64 @@ export async function getDashboardData(
       )
       .bind(clinicId)
       .all<FaqRecord>(),
+    d1
+      .prepare(
+        'SELECT id, kind, enabled, offset_minutes AS offsetMinutes, template FROM automation_rules WHERE clinic_id = ? ORDER BY offset_minutes',
+      )
+      .bind(clinicId)
+      .all<AutomationRuleRecord>(),
+    d1
+      .prepare(
+        `SELECT w.id, p.full_name AS patientName, p.phone AS patientPhone, s.name AS serviceName, d.name AS doctorName, w.preferred_date_from AS preferredDateFrom, w.preferred_date_to AS preferredDateTo, w.preferred_time AS preferredTime, w.status, w.notes, w.created_at AS createdAt FROM waitlist_entries w JOIN patients p ON p.id = w.patient_id LEFT JOIN services s ON s.id = w.service_id LEFT JOIN doctors d ON d.id = w.doctor_id WHERE w.clinic_id = ? ORDER BY CASE w.status WHEN 'waiting' THEN 0 WHEN 'contacted' THEN 1 ELSE 2 END, w.created_at DESC`,
+      )
+      .bind(clinicId)
+      .all<WaitlistRecord>(),
+    d1
+      .prepare(
+        `SELECT c.id, c.name, c.audience, c.status, c.scheduled_for AS scheduledFor, c.created_at AS createdAt, COUNT(r.id) AS recipients, SUM(CASE WHEN r.status = 'sent' THEN 1 ELSE 0 END) AS sent FROM campaigns c LEFT JOIN campaign_recipients r ON r.campaign_id = c.id AND r.clinic_id = c.clinic_id WHERE c.clinic_id = ? GROUP BY c.id ORDER BY c.created_at DESC LIMIT 24`,
+      )
+      .bind(clinicId)
+      .all<CampaignRecord>(),
+    d1
+      .prepare(
+        `SELECT dr.id, dr.appointment_id AS appointmentId, p.full_name AS patientName, COALESCE(s.name, 'Servicio') AS serviceName, a.starts_at AS startsAt, dr.amount_cents AS amountCents, dr.currency, dr.status, dr.reference, dr.requested_at AS requestedAt, dr.paid_at AS paidAt FROM deposit_requests dr JOIN appointments a ON a.id = dr.appointment_id AND a.clinic_id = dr.clinic_id LEFT JOIN patients p ON p.id = a.patient_id LEFT JOIN services s ON s.id = a.service_id WHERE dr.clinic_id = ? ORDER BY dr.requested_at DESC LIMIT 50`,
+      )
+      .bind(clinicId)
+      .all<DepositRecord>(),
+    d1
+      .prepare(
+        `SELECT id, patient_id AS patientId, kind, title, details, entity_id AS entityId, created_at AS createdAt FROM patient_events WHERE clinic_id = ? ORDER BY created_at DESC LIMIT 250`,
+      )
+      .bind(clinicId)
+      .all<PatientEventRecord>(),
+    d1
+      .prepare(
+        `SELECT id, kind, title, body, read_at AS readAt, created_at AS createdAt FROM staff_notifications WHERE clinic_id = ? ORDER BY created_at DESC LIMIT 30`,
+      )
+      .bind(clinicId)
+      .all<NotificationRecord>(),
+    d1
+      .prepare(
+        `SELECT COUNT(*) AS pending FROM scheduled_messages WHERE clinic_id = ? AND status = 'pending'`,
+      )
+      .bind(clinicId)
+      .first<{ pending: number }>(),
+    d1
+      .prepare(
+        `SELECT COUNT(*) AS sent, SUM(CASE WHEN status = 'responded' THEN 1 ELSE 0 END) AS answered, AVG(CASE WHEN score IS NOT NULL THEN score END) AS averageScore FROM surveys WHERE clinic_id = ?`,
+      )
+      .bind(clinicId)
+      .first<{
+        sent: number;
+        answered: number;
+        averageScore: number | null;
+      }>(),
+    d1
+      .prepare(
+        `SELECT id, name, address, phone, active FROM locations WHERE clinic_id = ? ORDER BY active DESC, name`,
+      )
+      .bind(clinicId)
+      .all<LocationRecord>(),
   ]);
 
   if (!clinic)
@@ -200,11 +355,28 @@ export async function getDashboardData(
       whatsappConfigured: saas.integrations.some(
         (item) => item.provider === 'whatsapp' && item.status === 'connected',
       ),
+      googleCalendarConfigured: saas.integrations.some(
+        (item) =>
+          item.provider === 'google_calendar' && item.status === 'connected',
+      ),
       mode:
         process.env.OPENAI_API_KEY && process.env.WHATSAPP_ACCESS_TOKEN
           ? 'production'
           : 'demo',
     },
+    commercial: {
+      automationRules: automationRules.results,
+      waitlist: waitlist.results,
+      campaigns: campaigns.results,
+      deposits: deposits.results,
+      patientEvents: patientEvents.results,
+      notifications: notifications.results,
+      scheduledPending: scheduledSummary?.pending ?? 0,
+      surveysSent: surveySummary?.sent ?? 0,
+      surveysAnswered: surveySummary?.answered ?? 0,
+      averageScore: surveySummary?.averageScore ?? null,
+    },
+    locations: locations.results,
     saas,
   };
 }

@@ -51,7 +51,11 @@
 body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
   background-image:
-    radial-gradient(circle at 80% 0%, color-mix(in oklch, var(--primary) 5%, transparent) 0, transparent 28rem),
+    radial-gradient(
+      circle at 80% 0%,
+      color-mix(in oklch, var(--primary) 5%, transparent) 0,
+      transparent 28rem
+    ),
     linear-gradient(180deg, #fbfdfc 0%, #f6faf8 100%);
 }
 
