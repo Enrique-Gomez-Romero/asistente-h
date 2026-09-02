@@ -5,6 +5,8 @@ import { revalidatePath } from 'next/cache';
 
 import { ensureDatabase } from '@/db/initialize';
 import { enqueueAppointmentAutomations } from '@/lib/automations';
+import { sendInvitationEmail } from '@/lib/email';
+import { createInvitationToken, hashInvitationToken } from '@/lib/invitations';
 import {
   ensureSaasUser,
   getRequestUser,
@@ -557,6 +559,15 @@ export async function createOrganization(input: {
     const user = await getRequestUser();
     if (!user) throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
     await ensureSaasUser(user);
+    const platformAdmin = await env.DB.prepare(
+      `SELECT user_id FROM platform_admins WHERE user_id = ?`,
+    )
+      .bind(user.userId)
+      .first();
+    if (!platformAdmin)
+      throw new Error(
+        'Solo la administración de Asistente H puede crear nuevos negocios.',
+      );
     const name = input.name.trim();
     if (name.length < 3) throw new Error('Escribe el nombre del negocio.');
     const businessType = input.businessType.trim() || 'dental';
@@ -821,51 +832,68 @@ export async function inviteMember(input: {
       'admin',
     ]);
     const email = input.email.trim().toLocaleLowerCase('es-MX');
-    if (
-      !/^\S+@\S+\.\S+$/.test(email) ||
-      !['admin', 'staff', 'viewer'].includes(input.role)
-    )
+    if (!/^\S+@\S+\.\S+$/.test(email))
       throw new Error('Revisa el correo y el rol.');
+    if (
+      !['admin', 'staff', 'viewer'].includes(input.role) &&
+      !(input.role === 'owner' && access.isPlatformAdmin)
+    )
+      throw new Error('No puedes asignar ese rol.');
     const plan = await env.DB.prepare(
-      `SELECT p.max_users AS maxUsers, (SELECT COUNT(*) FROM memberships m WHERE m.clinic_id = s.clinic_id AND m.status = 'active') AS currentUsers FROM subscriptions s JOIN subscription_plans p ON p.id = s.plan_id WHERE s.clinic_id = ?`,
+      `SELECT p.max_users AS maxUsers, (SELECT COUNT(*) FROM memberships m WHERE m.clinic_id = s.clinic_id AND m.status = 'active') AS currentUsers, (SELECT COUNT(*) FROM invitations i WHERE i.clinic_id = s.clinic_id AND i.status = 'pending' AND i.expires_at > ?) AS pendingInvites FROM subscriptions s JOIN subscription_plans p ON p.id = s.plan_id WHERE s.clinic_id = ?`,
     )
-      .bind(input.clinicId)
-      .first<{ maxUsers: number; currentUsers: number }>();
-    if (plan && plan.currentUsers >= plan.maxUsers)
+      .bind(new Date().toISOString(), input.clinicId)
+      .first<{
+        maxUsers: number;
+        currentUsers: number;
+        pendingInvites: number;
+      }>();
+    if (plan && plan.currentUsers + plan.pendingInvites >= plan.maxUsers)
       throw new Error('Alcanzaste el límite de usuarios de tu plan.');
-    const existingUser = await env.DB.prepare(
-      'SELECT id FROM saas_users WHERE email = ?',
-    )
-      .bind(email)
-      .first<{ id: string }>();
+    const [existingMembership, clinic] = await Promise.all([
+      env.DB.prepare(
+        `SELECT m.id FROM memberships m JOIN saas_users u ON u.id = m.user_id WHERE m.clinic_id = ? AND u.email = ? AND m.status = 'active'`,
+      )
+        .bind(input.clinicId, email)
+        .first<{ id: string }>(),
+      env.DB.prepare('SELECT name FROM clinics WHERE id = ?')
+        .bind(input.clinicId)
+        .first<{ name: string }>(),
+    ]);
+    if (!clinic) throw new Error('No se encontró el negocio.');
+    if (existingMembership)
+      throw new Error('Ese usuario ya forma parte del equipo.');
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
-    if (existingUser) {
-      await env.DB.prepare(
-        `INSERT INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, ?, ?, ?, 'active', ?) ON CONFLICT(clinic_id, user_id) DO UPDATE SET role = excluded.role, status = 'active'`,
-      )
-        .bind(
-          `membership_${crypto.randomUUID()}`,
-          input.clinicId,
-          existingUser.id,
-          input.role,
-          now,
-        )
-        .run();
-    }
-    await env.DB.prepare(
-      `INSERT INTO invitations (id, clinic_id, email, role, status, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
-    )
-      .bind(
-        `invitation_${crypto.randomUUID()}`,
+    const invitationId = `invitation_${crypto.randomUUID()}`;
+    const token = createInvitationToken();
+    const tokenHash = await hashInvitationToken(token);
+    const statements = [
+      env.DB.prepare(
+        `UPDATE invitations SET status = 'revoked' WHERE clinic_id = ? AND email = ? AND status = 'pending'`,
+      ).bind(input.clinicId, email),
+      env.DB.prepare(
+        `INSERT INTO invitations (id, clinic_id, email, role, status, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        invitationId,
         input.clinicId,
         email,
         input.role,
-        existingUser ? 'accepted' : 'pending',
+        'pending',
+        tokenHash,
         expiresAt,
         now,
-      )
-      .run();
+      ),
+    ];
+    await env.DB.batch(statements);
+    const delivery = await sendInvitationEmail({
+      invitationId,
+      recipient: email,
+      inviterName: access.user.displayName,
+      organizationName: clinic.name,
+      role: membershipRoleLabel(input.role),
+      token,
+    });
     await logAudit(
       input.clinicId,
       access.user.email,
@@ -877,10 +905,93 @@ export async function inviteMember(input: {
     revalidatePath('/app');
     return {
       ok: true,
-      message: existingUser
-        ? 'Usuario agregado al equipo.'
-        : 'Invitación preparada. Falta habilitar el envío de correo y compartirle acceso al sitio privado.',
+      message: delivery.sent
+        ? 'Invitación enviada por correo. Vence en siete días.'
+        : `Invitación creada, pero el correo quedó pendiente. ${delivery.error}`,
     };
+  });
+}
+
+export async function resendInvitation(
+  invitationId: string,
+): Promise<ActionResult> {
+  return actionResult(async () => {
+    const invitation = await env.DB.prepare(
+      `SELECT i.id, i.clinic_id AS clinicId, i.email, i.role, i.status, c.name AS clinicName FROM invitations i JOIN clinics c ON c.id = i.clinic_id WHERE i.id = ?`,
+    )
+      .bind(invitationId)
+      .first<{
+        id: string;
+        clinicId: string;
+        email: string;
+        role: MembershipRole;
+        status: string;
+        clinicName: string;
+      }>();
+    if (!invitation) throw new Error('No se encontró la invitación.');
+    const access = await requireClinicAccess(invitation.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    if (invitation.status === 'accepted')
+      throw new Error('El usuario ya forma parte del equipo.');
+    const token = createInvitationToken();
+    const tokenHash = await hashInvitationToken(token);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
+    await env.DB.prepare(
+      `UPDATE invitations SET status = 'pending', token_hash = ?, expires_at = ? WHERE id = ? AND clinic_id = ?`,
+    )
+      .bind(tokenHash, expiresAt, invitation.id, invitation.clinicId)
+      .run();
+    const delivery = await sendInvitationEmail({
+      invitationId: invitation.id,
+      recipient: invitation.email,
+      inviterName: access.user.displayName,
+      organizationName: invitation.clinicName,
+      role: membershipRoleLabel(invitation.role),
+      token,
+    });
+    revalidatePath('/app');
+    return {
+      ok: delivery.sent,
+      message: delivery.sent
+        ? 'Invitación reenviada y vigencia renovada.'
+        : (delivery.error ?? 'No se pudo enviar el correo.'),
+    };
+  });
+}
+
+export async function revokeInvitation(
+  invitationId: string,
+): Promise<ActionResult> {
+  return actionResult(async () => {
+    const invitation = await env.DB.prepare(
+      `SELECT clinic_id AS clinicId, status FROM invitations WHERE id = ?`,
+    )
+      .bind(invitationId)
+      .first<{ clinicId: string; status: string }>();
+    if (!invitation) throw new Error('No se encontró la invitación.');
+    const access = await requireClinicAccess(invitation.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    if (invitation.status !== 'pending')
+      throw new Error('La invitación ya no está pendiente.');
+    await env.DB.prepare(
+      `UPDATE invitations SET status = 'revoked', token_hash = NULL WHERE id = ? AND clinic_id = ?`,
+    )
+      .bind(invitationId, invitation.clinicId)
+      .run();
+    await logAudit(
+      invitation.clinicId,
+      access.user.email,
+      'revoke',
+      'invitation',
+      invitationId,
+      null,
+    );
+    revalidatePath('/app');
+    return { ok: true, message: 'Invitación revocada.' };
   });
 }
 
@@ -1024,4 +1135,15 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 60);
+}
+
+function membershipRoleLabel(role: MembershipRole) {
+  return (
+    {
+      owner: 'Propietario',
+      admin: 'Administrador',
+      staff: 'Personal',
+      viewer: 'Solo lectura',
+    } satisfies Record<MembershipRole, string>
+  )[role];
 }

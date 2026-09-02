@@ -2,7 +2,13 @@
 
 import { type SyntheticEvent, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Building2, CheckCircle2, MessageCircle, Sparkles } from 'lucide-react';
+import {
+  Building2,
+  CheckCircle2,
+  LogOut,
+  MessageCircle,
+  Sparkles,
+} from 'lucide-react';
 
 import { createOrganization, type ActionResult } from '@/app/actions';
 import { Button } from '@/components/ui/button';
@@ -22,8 +28,10 @@ import {
 
 export function OrganizationOnboarding({
   displayName,
+  canCreateOrganization,
 }: {
   displayName: string;
+  canCreateOrganization: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -67,11 +75,14 @@ export function OrganizationOnboarding({
             Hola, {displayName}
           </p>
           <h1 className="mt-2 font-heading text-4xl font-bold tracking-[-0.045em] md:text-5xl">
-            Configura tu primer negocio.
+            {canCreateOrganization
+              ? 'Configura tu primer negocio.'
+              : 'Tu acceso está listo para una invitación.'}
           </h1>
           <p className="mt-4 max-w-lg leading-relaxed text-muted-foreground">
-            Crearemos una organización aislada con su propia agenda, equipo,
-            catálogo, horarios, consumo e integraciones.
+            {canCreateOrganization
+              ? 'Crearemos una organización aislada con su propia agenda, equipo, catálogo, horarios, consumo e integraciones.'
+              : 'Inicia sesión desde el enlace que te envió el administrador de tu negocio. Así podremos asignarte la organización y el rol correctos.'}
           </p>
           <div className="mt-7 space-y-3 text-sm">
             <Benefit
@@ -88,118 +99,147 @@ export function OrganizationOnboarding({
             />
           </div>
         </section>
-        <Card className="border-0 shadow-[0_24px_70px_rgb(26_52_45/12%)]">
-          <CardHeader>
-            <CardTitle>Datos básicos</CardTitle>
-            <CardDescription>
-              Podrás modificarlos después desde Configuración.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={submit}>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="onboarding-name">
-                    Nombre del negocio
-                  </FieldLabel>
-                  <Input
-                    id="onboarding-name"
-                    name="name"
-                    placeholder="Clínica, consultorio o empresa"
-                    required
-                  />
-                </Field>
-                <div className="grid gap-4 sm:grid-cols-2">
+        {canCreateOrganization ? (
+          <Card className="border-0 shadow-[0_24px_70px_rgb(26_52_45/12%)]">
+            <CardHeader>
+              <CardTitle>Datos básicos</CardTitle>
+              <CardDescription>
+                Podrás modificarlos después desde Configuración.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={submit}>
+                <FieldGroup>
                   <Field>
-                    <FieldLabel htmlFor="onboarding-type">
-                      Tipo de negocio
+                    <FieldLabel htmlFor="onboarding-name">
+                      Nombre del negocio
+                    </FieldLabel>
+                    <Input
+                      id="onboarding-name"
+                      name="name"
+                      placeholder="Clínica, consultorio o empresa"
+                      required
+                    />
+                  </Field>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="onboarding-type">
+                        Tipo de negocio
+                      </FieldLabel>
+                      <NativeSelect
+                        id="onboarding-type"
+                        name="businessType"
+                        defaultValue="dental"
+                        className="w-full"
+                      >
+                        <NativeSelectOption value="dental">
+                          Consultorio dental
+                        </NativeSelectOption>
+                        <NativeSelectOption value="medical">
+                          Consultorio médico
+                        </NativeSelectOption>
+                        <NativeSelectOption value="beauty">
+                          Belleza y bienestar
+                        </NativeSelectOption>
+                        <NativeSelectOption value="professional">
+                          Servicios profesionales
+                        </NativeSelectOption>
+                        <NativeSelectOption value="general">
+                          Otro negocio
+                        </NativeSelectOption>
+                      </NativeSelect>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="onboarding-phone">
+                        Teléfono
+                      </FieldLabel>
+                      <Input
+                        id="onboarding-phone"
+                        name="phone"
+                        placeholder="+52 55…"
+                      />
+                    </Field>
+                  </div>
+                  <Field>
+                    <FieldLabel htmlFor="onboarding-address">
+                      Dirección
+                    </FieldLabel>
+                    <Input
+                      id="onboarding-address"
+                      name="address"
+                      placeholder="Dirección de la sede principal"
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="onboarding-timezone">
+                      Zona horaria
                     </FieldLabel>
                     <NativeSelect
-                      id="onboarding-type"
-                      name="businessType"
-                      defaultValue="dental"
+                      id="onboarding-timezone"
+                      name="timezone"
+                      defaultValue="America/Mexico_City"
                       className="w-full"
                     >
-                      <NativeSelectOption value="dental">
-                        Consultorio dental
+                      <NativeSelectOption value="America/Mexico_City">
+                        Ciudad de México
                       </NativeSelectOption>
-                      <NativeSelectOption value="medical">
-                        Consultorio médico
+                      <NativeSelectOption value="America/Cancun">
+                        Cancún
                       </NativeSelectOption>
-                      <NativeSelectOption value="beauty">
-                        Belleza y bienestar
+                      <NativeSelectOption value="America/Monterrey">
+                        Monterrey
                       </NativeSelectOption>
-                      <NativeSelectOption value="professional">
-                        Servicios profesionales
+                      <NativeSelectOption value="America/Tijuana">
+                        Tijuana
                       </NativeSelectOption>
-                      <NativeSelectOption value="general">
-                        Otro negocio
+                      <NativeSelectOption value="America/Bogota">
+                        Bogotá
+                      </NativeSelectOption>
+                      <NativeSelectOption value="America/Lima">
+                        Lima
                       </NativeSelectOption>
                     </NativeSelect>
                   </Field>
-                  <Field>
-                    <FieldLabel htmlFor="onboarding-phone">Teléfono</FieldLabel>
-                    <Input
-                      id="onboarding-phone"
-                      name="phone"
-                      placeholder="+52 55…"
-                    />
-                  </Field>
-                </div>
-                <Field>
-                  <FieldLabel htmlFor="onboarding-address">
-                    Dirección
-                  </FieldLabel>
-                  <Input
-                    id="onboarding-address"
-                    name="address"
-                    placeholder="Dirección de la sede principal"
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="onboarding-timezone">
-                    Zona horaria
-                  </FieldLabel>
-                  <NativeSelect
-                    id="onboarding-timezone"
-                    name="timezone"
-                    defaultValue="America/Mexico_City"
-                    className="w-full"
-                  >
-                    <NativeSelectOption value="America/Mexico_City">
-                      Ciudad de México
-                    </NativeSelectOption>
-                    <NativeSelectOption value="America/Cancun">
-                      Cancún
-                    </NativeSelectOption>
-                    <NativeSelectOption value="America/Monterrey">
-                      Monterrey
-                    </NativeSelectOption>
-                    <NativeSelectOption value="America/Tijuana">
-                      Tijuana
-                    </NativeSelectOption>
-                    <NativeSelectOption value="America/Bogota">
-                      Bogotá
-                    </NativeSelectOption>
-                    <NativeSelectOption value="America/Lima">
-                      Lima
-                    </NativeSelectOption>
-                  </NativeSelect>
-                </Field>
-                {result ? (
-                  <p
-                    className={`rounded-xl border p-3 text-sm ${result.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}
-                  >
-                    {result.message}
-                  </p>
-                ) : null}
-                <Button type="submit" size="lg" disabled={pending}>
-                  {pending ? 'Creando espacio…' : 'Crear mi negocio'}
-                </Button>
-              </FieldGroup>
-            </form>
-          </CardContent>
-        </Card>
+                  {result ? (
+                    <p
+                      className={`rounded-xl border p-3 text-sm ${result.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}
+                    >
+                      {result.message}
+                    </p>
+                  ) : null}
+                  <Button type="submit" size="lg" disabled={pending}>
+                    {pending ? 'Creando espacio…' : 'Crear mi negocio'}
+                  </Button>
+                </FieldGroup>
+              </form>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="border-0 shadow-[0_24px_70px_rgb(26_52_45/12%)]">
+            <CardHeader>
+              <CardTitle>No tienes negocios asignados</CardTitle>
+              <CardDescription>
+                Pide al administrador que reenvíe tu invitación al correo con el
+                que acabas de iniciar sesión.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-relaxed text-emerald-800">
+                Por seguridad, una cuenta nueva no puede crear organizaciones ni
+                ver información hasta aceptar una invitación válida.
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  window.location.assign('/signout-with-chatgpt?return_to=/')
+                }
+              >
+                <LogOut data-icon="inline-start" /> Cambiar de cuenta
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </main>
   );

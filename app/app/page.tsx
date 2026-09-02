@@ -15,7 +15,12 @@ export default async function CustomerApp({
   const params = await searchParams;
   const saas = await getSaasContext(user, params.organization);
   if (!saas.activeOrganization)
-    return <OrganizationOnboarding displayName={user.displayName} />;
+    return (
+      <OrganizationOnboarding
+        displayName={user.displayName}
+        canCreateOrganization={saas.isPlatformAdmin}
+      />
+    );
   const data = await getDashboardData(saas.activeOrganization.id, saas);
   return <DentalDashboard data={data} />;
 }

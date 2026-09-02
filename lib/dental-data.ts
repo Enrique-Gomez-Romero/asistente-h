@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 
 import { ensureDatabase } from '@/db/initialize';
+import { googleSecretManagerConfigured } from '@/lib/google-secrets';
 import type { SaasContext } from '@/lib/saas';
 
 export type ClinicRecord = {
@@ -175,6 +176,13 @@ export type DashboardData = {
     openAiConfigured: boolean;
     whatsappConfigured: boolean;
     googleCalendarConfigured: boolean;
+    metaEmbeddedSignup: {
+      appId: string | null;
+      configId: string | null;
+      ready: boolean;
+      secretStorageReady: boolean;
+    };
+    invitationEmailReady: boolean;
     mode: 'demo' | 'production';
   };
   commercial: {
@@ -358,6 +366,20 @@ export async function getDashboardData(
       googleCalendarConfigured: saas.integrations.some(
         (item) =>
           item.provider === 'google_calendar' && item.status === 'connected',
+      ),
+      metaEmbeddedSignup: {
+        appId: process.env.META_APP_ID ?? null,
+        configId: process.env.META_CONFIG_ID ?? null,
+        ready: Boolean(
+          process.env.META_APP_ID &&
+          process.env.META_CONFIG_ID &&
+          process.env.META_APP_SECRET &&
+          googleSecretManagerConfigured(),
+        ),
+        secretStorageReady: googleSecretManagerConfigured(),
+      },
+      invitationEmailReady: Boolean(
+        process.env.RESEND_API_KEY && process.env.EMAIL_FROM,
       ),
       mode:
         process.env.OPENAI_API_KEY && process.env.WHATSAPP_ACCESS_TOKEN

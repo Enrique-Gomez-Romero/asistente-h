@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 
 import { ensureDatabase } from '@/db/initialize';
+import { accessOrganizationSecret } from '@/lib/google-secrets';
 import { recordUsage } from '@/lib/saas';
 
 export async function sendTenantWhatsAppText(
@@ -10,10 +11,14 @@ export async function sendTenantWhatsAppText(
 ): Promise<{ sent: boolean; error?: string }> {
   await ensureDatabase();
   const connection = await env.DB.prepare(
-    `SELECT phone_number_id AS phoneNumberId, status FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp'`,
+    `SELECT phone_number_id AS phoneNumberId, secret_reference AS secretReference, status FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp'`,
   )
     .bind(clinicId)
-    .first<{ phoneNumberId: string | null; status: string }>();
+    .first<{
+      phoneNumberId: string | null;
+      secretReference: string | null;
+      status: string;
+    }>();
   const configuredPhoneNumberId =
     connection?.phoneNumberId ||
     (clinicId === 'clinic_demo' ? process.env.WHATSAPP_PHONE_NUMBER_ID : null);
@@ -22,10 +27,26 @@ export async function sendTenantWhatsAppText(
       sent: false,
       error: 'WhatsApp todavía no está conectado para esta organización.',
     };
-  if (
-    !process.env.WHATSAPP_ACCESS_TOKEN ||
-    configuredPhoneNumberId !== process.env.WHATSAPP_PHONE_NUMBER_ID
-  )
+  let accessToken: string | null = null;
+  if (connection?.secretReference) {
+    try {
+      accessToken = await accessOrganizationSecret(connection.secretReference);
+    } catch (error) {
+      return {
+        sent: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'No fue posible leer la credencial de WhatsApp.',
+      };
+    }
+  } else if (
+    process.env.WHATSAPP_ACCESS_TOKEN &&
+    configuredPhoneNumberId === process.env.WHATSAPP_PHONE_NUMBER_ID
+  ) {
+    accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  }
+  if (!accessToken)
     return {
       sent: false,
       error: 'La conexión requiere un token seguro por organización.',
@@ -36,7 +57,7 @@ export async function sendTenantWhatsAppText(
     {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

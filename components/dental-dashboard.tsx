@@ -39,6 +39,8 @@ import {
   createService,
   inviteMember,
   markConversationRead,
+  resendInvitation,
+  revokeInvitation,
   saveIntegrationMetadata,
   sendConversationMessage,
   setAppointmentStatus,
@@ -57,6 +59,7 @@ import {
   updateAutomationRule,
   verifyAppointmentDeposit,
 } from '@/app/commercial-actions';
+import { MetaEmbeddedSignup } from '@/components/meta-embedded-signup';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -223,15 +226,17 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start"
-              onClick={() => setOrganizationOpen(true)}
-            >
-              <Plus data-icon="inline-start" />
-              Nuevo negocio
-            </Button>
+            {data.saas.isPlatformAdmin ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start"
+                onClick={() => setOrganizationOpen(true)}
+              >
+                <Plus data-icon="inline-start" />
+                Nuevo negocio
+              </Button>
+            ) : null}
           </div>
           <div className="mt-auto space-y-3">
             <Card className="border-0 bg-[#ecf8f4] shadow-none ring-0">
@@ -308,14 +313,16 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                   <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-[#ef715f]" />
                 ) : null}
               </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label="Crear otro negocio"
-                onClick={() => setOrganizationOpen(true)}
-              >
-                <Building2 />
-              </Button>
+              {data.saas.isPlatformAdmin ? (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Crear otro negocio"
+                  onClick={() => setOrganizationOpen(true)}
+                >
+                  <Building2 />
+                </Button>
+              ) : null}
               <Button
                 size="lg"
                 className="ml-1 rounded-xl px-4 shadow-sm"
@@ -390,12 +397,14 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
         isPending={isPending}
         clinicId={data.clinic.id}
       />
-      <NewOrganizationDialog
-        open={organizationOpen}
-        setOpen={setOrganizationOpen}
-        runAction={runAction}
-        isPending={isPending}
-      />
+      {data.saas.isPlatformAdmin ? (
+        <NewOrganizationDialog
+          open={organizationOpen}
+          setOpen={setOrganizationOpen}
+          runAction={runAction}
+          isPending={isPending}
+        />
+      ) : null}
       {notice ? (
         <output
           className={`fixed bottom-20 right-4 z-[80] max-w-sm rounded-xl border px-4 py-3 text-sm shadow-xl lg:bottom-5 ${notice.ok ? 'border-[#bfe8dc] bg-[#effaf7] text-[#176d59]' : 'border-red-200 bg-red-50 text-red-700'}`}
@@ -1867,20 +1876,7 @@ function SettingsView({
       inviteMember({
         clinicId: data.clinic.id,
         email: formText(form, 'email'),
-        role: formText(form, 'role') as 'admin' | 'staff' | 'viewer',
-      }),
-    );
-  }
-
-  function whatsappSubmit(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    runAction(() =>
-      saveIntegrationMetadata({
-        clinicId: data.clinic.id,
-        provider: 'whatsapp',
-        externalAccountId: formText(form, 'externalAccountId'),
-        phoneNumberId: formText(form, 'phoneNumberId'),
+        role: formText(form, 'role') as 'owner' | 'admin' | 'staff' | 'viewer',
       }),
     );
   }
@@ -2239,6 +2235,11 @@ function SettingsView({
                   required
                 />
                 <NativeSelect aria-label="Rol" name="role" defaultValue="staff">
+                  {data.saas.isPlatformAdmin ? (
+                    <NativeSelectOption value="owner">
+                      Propietario
+                    </NativeSelectOption>
+                  ) : null}
                   <NativeSelectOption value="admin">
                     Administrador
                   </NativeSelectOption>
@@ -2255,15 +2256,54 @@ function SettingsView({
                 </Button>
               </form>
             ) : null}
-            {data.saas.invitations.filter((item) => item.status === 'pending')
-              .length ? (
-              <p className="text-xs text-muted-foreground">
-                {
-                  data.saas.invitations.filter(
-                    (item) => item.status === 'pending',
-                  ).length
-                }{' '}
-                invitación(es) pendientes.
+            {data.saas.invitations
+              .filter((item) => item.status === 'pending')
+              .map((invitation) => (
+                <div
+                  key={invitation.id}
+                  className="flex flex-col gap-3 rounded-xl border border-dashed p-3 sm:flex-row sm:items-center"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {invitation.email}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {roleLabel(invitation.role)} · vence{' '}
+                      {formatDate(invitation.expiresAt)}
+                    </p>
+                  </div>
+                  {canManage ? (
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={isPending}
+                        onClick={() =>
+                          runAction(() => resendInvitation(invitation.id))
+                        }
+                      >
+                        Reenviar
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={isPending}
+                        onClick={() =>
+                          runAction(() => revokeInvitation(invitation.id))
+                        }
+                      >
+                        Revocar
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            {!data.integration.invitationEmailReady ? (
+              <p className="rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
+                El flujo de invitación está listo, pero falta configurar el
+                servicio de correo para enviar los enlaces automáticamente.
               </p>
             ) : null}
           </CardContent>
@@ -2417,22 +2457,18 @@ function SettingsView({
                     </Button>
                   </div>
                 </form>
-                <form
-                  onSubmit={whatsappSubmit}
-                  className="space-y-2 rounded-xl border p-3"
-                >
-                  <p className="text-sm font-semibold">Meta WhatsApp</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Input
-                      name="externalAccountId"
-                      placeholder="WhatsApp Business Account ID"
-                    />
-                    <Input name="phoneNumberId" placeholder="Phone Number ID" />
-                  </div>
-                  <Button type="submit" variant="outline" disabled={isPending}>
-                    Guardar identificadores
-                  </Button>
-                </form>
+                <MetaEmbeddedSignup
+                  clinicId={data.clinic.id}
+                  appId={data.integration.metaEmbeddedSignup.appId}
+                  configId={data.integration.metaEmbeddedSignup.configId}
+                  ready={data.integration.metaEmbeddedSignup.ready}
+                  connected={data.integration.whatsappConfigured}
+                  phoneNumberId={
+                    data.saas.integrations.find(
+                      (item) => item.provider === 'whatsapp',
+                    )?.phoneNumberId ?? null
+                  }
+                />
                 <form
                   onSubmit={googleCalendarSubmit}
                   className="space-y-2 rounded-xl border p-3"
@@ -2454,10 +2490,9 @@ function SettingsView({
                 </form>
               </>
             ) : null}
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
-              Los identificadores pueden guardarse aquí. Los tokens y llaves API
-              nunca se capturan en el navegador: se agregan como secretos del
-              despliegue.
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs leading-relaxed text-emerald-800">
+              Los tokens de cada negocio se guardan en Google Secret Manager; la
+              base de datos conserva únicamente una referencia segura.
             </div>
           </CardContent>
         </Card>

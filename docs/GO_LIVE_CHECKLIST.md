@@ -15,8 +15,9 @@
 - [ ] Probar alta, renovación por transferencia, vencimiento, suspensión y reactivación.
 - [ ] Confirmar folio y enlace de factura en cada pago registrado.
 - [ ] Aplicar límites de plan con mensajes claros y sin perder datos.
-- [ ] Conectar correo transaccional para invitaciones y recuperación de acceso.
-- [ ] Reemplazar o ampliar el acceso privado actual para permitir clientes externos.
+- [ ] Verificar el dominio remitente y configurar Resend para invitaciones.
+- [ ] Probar invitación, correo equivocado, expiración, reenvío y revocación.
+- [ ] Confirmar que el sitio público conserva `/app` y `/platform` protegidos por inicio de sesión.
 - [ ] Confirmar que un usuario de una organización no puede consultar IDs de otra.
 
 ## Meta WhatsApp
@@ -28,6 +29,7 @@
 - [ ] Aprobar plantillas de confirmación, recordatorio y reprogramación.
 - [ ] Probar la ventana de atención de 24 horas.
 - [ ] Completar Embedded Signup y guardar un token por negocio en Secret Manager.
+- [ ] Dar a la cuenta de servicio únicamente permisos de lectura/escritura sobre los secretos de Asistente H.
 
 ## Seguridad y privacidad
 

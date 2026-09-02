@@ -27,6 +27,9 @@ Base funcional multiempresa para vender recepción por WhatsApp e IA mediante su
 - Anticipos y pagos de suscripción por transferencia con verificación manual.
 - Historial unificado por paciente, notificaciones al personal y exportación CSV/iCalendar.
 - Centro de administración de organizaciones, planes, vigencias, suspensiones, transferencias y facturas.
+- Alta controlada: solo la plataforma crea negocios y los clientes entran mediante invitaciones de un solo uso.
+- Meta Embedded Signup preparado para autorizar el WABA y número propiedad de cada cliente.
+- Tokens de Meta por organización almacenados fuera de D1 mediante Google Secret Manager.
 
 ## Ejecutar localmente
 
@@ -58,6 +61,16 @@ Nunca subas tokens o llaves al repositorio. En producción deben guardarse como 
 9. Crear y aprobar plantillas para confirmaciones y recordatorios fuera de la ventana de 24 horas.
 
 Para múltiples clientes se usa una sola aplicación de Meta de la plataforma con Embedded Signup. Cada negocio conserva su propio portafolio empresarial, cuenta de WhatsApp Business y número; no necesita una aplicación de desarrollador distinta. `phone_number_id` permite resolver el negocio correcto antes de leer o escribir datos. Los tokens por negocio deben almacenarse en Secret Manager antes de abrir el alta comercial.
+
+## Acceso e invitaciones
+
+El sitio puede publicarse sin volver públicos los datos. La portada acepta visitantes anónimos, pero `/app`, `/platform`, exportaciones y acciones verifican identidad en el servidor. Un usuario nuevo no puede crear negocios ni convertirse en administrador. La administración crea la organización, invita al propietario y el enlace solo puede aceptarse con el correo destinatario.
+
+Las invitaciones usan Resend mediante `RESEND_API_KEY` y un remitente verificado en `EMAIL_FROM`. El enlace vence en siete días; desde Configuración puede reenviarse o revocarse.
+
+## Credenciales de Meta
+
+Embedded Signup entrega un código temporal y los identificadores del WABA y número. El servidor intercambia el código, comprueba el número, suscribe el webhook y guarda el token como una versión en Google Secret Manager. D1 conserva únicamente `secret_reference`. Al desconectar WhatsApp, la referencia y el secreto se eliminan.
 
 ## Suscripciones por transferencia
 
@@ -105,9 +118,8 @@ La versión alojada usa D1 y acceso privado. Para una operación comercial en Go
 ## Pendientes externos antes de cobrar
 
 - Definir precios comerciales para los planes Profesional y Escala.
-- Conectar correo transaccional para invitaciones y notificaciones.
-- Cambiar la política de acceso privada por autenticación apta para clientes.
-- Llevar tokens de Meta por organización a Secret Manager y completar Embedded Signup.
+- Cargar las credenciales de Resend y verificar el remitente para activar el envío real de invitaciones.
+- Cargar la aplicación de Meta y la cuenta de servicio de Google para activar Embedded Signup y Secret Manager.
 - Configurar Cloud Scheduler para recordatorios y campañas.
 - Crear credenciales OAuth de Google si se desea sincronización directa; CSV e iCalendar ya funcionan sin ellas.
 

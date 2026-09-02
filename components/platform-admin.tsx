@@ -321,6 +321,32 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
             </Card>
             <Card className="border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
               <CardHeader>
+                <CardTitle>Infraestructura comercial</CardTitle>
+                <CardDescription>
+                  Estado de las conexiones necesarias para incorporar clientes.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <InfrastructureRow
+                  label="Correo de invitaciones"
+                  ready={data.infrastructure.invitationEmail}
+                />
+                <InfrastructureRow
+                  label="Meta Embedded Signup"
+                  ready={data.infrastructure.metaEmbeddedSignup}
+                />
+                <InfrastructureRow
+                  label="Google Secret Manager"
+                  ready={data.infrastructure.googleSecretManager}
+                />
+                <InfrastructureRow
+                  label="Ejecución de automatizaciones"
+                  ready={data.infrastructure.automationRunner}
+                />
+              </CardContent>
+            </Card>
+            <Card className="border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
+              <CardHeader>
                 <CardTitle>Pagos recientes</CardTitle>
                 <CardDescription>
                   Transferencias capturadas manualmente.
@@ -365,6 +391,30 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
         </div>
       </div>
     </main>
+  );
+}
+
+function InfrastructureRow({
+  label,
+  ready,
+}: {
+  label: string;
+  ready: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border p-3">
+      <div className="flex items-center gap-2">
+        <ShieldCheck
+          className={`size-4 ${ready ? 'text-emerald-600' : 'text-amber-600'}`}
+        />
+        <span className="text-sm font-medium">{label}</span>
+      </div>
+      <span
+        className={`rounded-full px-2 py-1 text-[11px] font-semibold ${ready ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}
+      >
+        {ready ? 'Listo' : 'Configurar'}
+      </span>
+    </div>
   );
 }
 

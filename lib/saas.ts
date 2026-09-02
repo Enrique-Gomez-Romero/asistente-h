@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 
 import { getChatGPTUser, type ChatGPTUser } from '@/app/chatgpt-auth';
 import { ensureDatabase } from '@/db/initialize';
+import { googleSecretManagerConfigured } from '@/lib/google-secrets';
 
 export type MembershipRole = 'owner' | 'admin' | 'staff' | 'viewer';
 
@@ -120,39 +121,23 @@ export async function ensureSaasUser(user: ChatGPTUser): Promise<void> {
     )
     .run();
 
-  const admin = await env.DB.prepare(
-    'SELECT user_id AS userId FROM platform_admins LIMIT 1',
-  ).first<{ userId: string }>();
-  if (!admin) {
+  const platformAdminEmails = new Set(
+    (process.env.PLATFORM_ADMIN_EMAILS ?? '')
+      .split(',')
+      .map((email) => email.trim().toLocaleLowerCase('es-MX'))
+      .filter(Boolean),
+  );
+  if (process.env.NODE_ENV === 'development')
+    platformAdminEmails.add(user.email.toLocaleLowerCase('es-MX'));
+  const shouldBePlatformAdmin = platformAdminEmails.has(
+    user.email.toLocaleLowerCase('es-MX'),
+  );
+  if (shouldBePlatformAdmin) {
     await env.DB.prepare(
       'INSERT OR IGNORE INTO platform_admins (user_id, created_at) VALUES (?, ?)',
     )
       .bind(user.userId, now)
       .run();
-  }
-
-  const pendingInvitations = await env.DB.prepare(
-    `SELECT id, clinic_id AS clinicId, role FROM invitations WHERE email = ? AND status = 'pending' AND expires_at > ?`,
-  )
-    .bind(user.email.toLocaleLowerCase('es-MX'), now)
-    .all<{ id: string; clinicId: string; role: MembershipRole }>();
-  if (pendingInvitations.results.length) {
-    await env.DB.batch(
-      pendingInvitations.results.flatMap((invitation) => [
-        env.DB.prepare(
-          `INSERT INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, ?, ?, ?, 'active', ?) ON CONFLICT(clinic_id, user_id) DO UPDATE SET role = excluded.role, status = 'active'`,
-        ).bind(
-          `membership_${crypto.randomUUID()}`,
-          invitation.clinicId,
-          user.userId,
-          invitation.role,
-          now,
-        ),
-        env.DB.prepare(
-          `UPDATE invitations SET status = 'accepted' WHERE id = ?`,
-        ).bind(invitation.id),
-      ]),
-    );
   }
 
   const membership = await env.DB.prepare(
@@ -165,7 +150,7 @@ export async function ensureSaasUser(user: ChatGPTUser): Promise<void> {
   const demoOwner = await env.DB.prepare(
     `SELECT id FROM memberships WHERE clinic_id = 'clinic_demo' AND role = 'owner' AND status = 'active' LIMIT 1`,
   ).first<{ id: string }>();
-  if (!demoOwner) {
+  if (!demoOwner && shouldBePlatformAdmin) {
     await env.DB.prepare(
       `INSERT OR IGNORE INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, 'clinic_demo', ?, 'owner', 'active', ?)`,
     )
@@ -394,6 +379,12 @@ export async function requireClinicAccess(
 
 export type PlatformAdminData = {
   user: ChatGPTUser;
+  infrastructure: {
+    invitationEmail: boolean;
+    metaEmbeddedSignup: boolean;
+    googleSecretManager: boolean;
+    automationRunner: boolean;
+  };
   stats: {
     organizations: number;
     users: number;
@@ -463,6 +454,18 @@ export async function getPlatformAdminData(
   ]);
   return {
     user,
+    infrastructure: {
+      invitationEmail: Boolean(
+        process.env.RESEND_API_KEY && process.env.EMAIL_FROM,
+      ),
+      metaEmbeddedSignup: Boolean(
+        process.env.META_APP_ID &&
+        process.env.META_CONFIG_ID &&
+        process.env.META_APP_SECRET,
+      ),
+      googleSecretManager: googleSecretManagerConfigured(),
+      automationRunner: Boolean(process.env.AUTOMATION_SECRET),
+    },
     stats,
     plans: plans.results,
     organizations: organizations.results,
