@@ -35,6 +35,11 @@ const functionDeclarations = [
           description:
             'ID del profesional. Omite este campo si cualquiera es válido.',
         },
+        service_id: {
+          type: 'string',
+          description:
+            'ID del servicio para respetar su duración al calcular horarios.',
+        },
       },
       required: ['date'],
       additionalProperties: false,
@@ -194,11 +199,13 @@ async function executeTool(
     const date = typeof args.date === 'string' ? args.date : '2026-09-01';
     const doctorId =
       typeof args.doctor_id === 'string' ? args.doctor_id : undefined;
+    const serviceId =
+      typeof args.service_id === 'string' ? args.service_id : undefined;
     const clinic = await getClinicInformation(clinicId);
     return {
       date,
       timezone: clinic?.timezone,
-      slots: await getAvailableSlots(clinicId, date, doctorId),
+      slots: await getAvailableSlots(clinicId, date, doctorId, serviceId),
     };
   }
   if (name === 'get_clinic_information') {
@@ -341,11 +348,22 @@ function formatTime(value: string, timeZone: string): string {
 
 async function hasAssistantCapacity(clinicId: string): Promise<boolean> {
   const row = await env.DB.prepare(
-    `SELECT p.max_ai_requests AS limitValue, COALESCE((SELECT SUM(quantity) FROM usage_events u WHERE u.clinic_id = s.clinic_id AND u.metric = 'ai_request' AND u.created_at >= s.current_period_start), 0) AS usedValue FROM subscriptions s JOIN subscription_plans p ON p.id = s.plan_id WHERE s.clinic_id = ? AND s.status IN ('trialing', 'active')`,
+    `SELECT p.max_ai_requests AS limitValue, p.max_conversations AS conversationLimit, s.current_period_end AS periodEnd, COALESCE((SELECT SUM(quantity) FROM usage_events u WHERE u.clinic_id = s.clinic_id AND u.metric = 'ai_request' AND u.created_at >= s.current_period_start), 0) AS usedValue, COALESCE((SELECT SUM(quantity) FROM usage_events u WHERE u.clinic_id = s.clinic_id AND u.metric = 'conversation' AND u.created_at >= s.current_period_start), 0) AS conversationValue FROM subscriptions s JOIN subscription_plans p ON p.id = s.plan_id WHERE s.clinic_id = ? AND s.status IN ('trialing', 'active')`,
   )
     .bind(clinicId)
-    .first<{ limitValue: number; usedValue: number }>();
-  return Boolean(row && Number(row.usedValue) < Number(row.limitValue));
+    .first<{
+      limitValue: number;
+      conversationLimit: number;
+      periodEnd: string;
+      usedValue: number;
+      conversationValue: number;
+    }>();
+  return Boolean(
+    row &&
+      new Date(row.periodEnd).getTime() >= Date.now() &&
+      Number(row.usedValue) < Number(row.limitValue) &&
+      Number(row.conversationValue) <= Number(row.conversationLimit),
+  );
 }
 
 async function getClinicInformation(clinicId: string): Promise<null | {

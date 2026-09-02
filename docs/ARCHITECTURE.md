@@ -49,19 +49,24 @@ Membresía + rol ──► Organización activa ──► Datos operativos
 9. El consumo se registra por organización y se compara con el periodo y los límites del plan.
 10. Un usuario sin membresía no puede crear organizaciones; debe aceptar un token de invitación ligado a su correo.
 11. D1 nunca guarda el token de Meta: solo la referencia a Google Secret Manager.
+12. Google Calendar se sincroniza como copia operativa; D1 sigue siendo la agenda oficial.
+13. Los trabajos programados se reclaman de forma atómica para evitar envíos dobles.
 
 ## Módulos
 
 - `app/api/whatsapp/webhook`: verificación, firma, recepción y respuesta.
 - `app/api/assistant/simulate`: laboratorio seguro del asistente.
 - `app/api/jobs/automations`: ejecución protegida de recordatorios y campañas.
-- `app/api/export`: exportaciones CSV e iCalendar autorizadas por organización.
+- `app/api/export`: exportaciones CSV, iCalendar y respaldo JSON autorizadas por organización.
+- `app/api/google-calendar`: autorización OAuth y retorno seguro por organización.
 - `app/actions.ts`: mutaciones autorizadas desde el panel.
 - `app/commercial-actions.ts`: cobranza manual y automatización comercial.
 - `lib/assistant.ts`: orquestación de la cuenta central de Gemini y fallback local.
 - `lib/automations.ts`: cola, plantillas, reintentos y envíos programados.
 - `lib/whatsapp.ts`: envío resuelto por organización y número de Meta.
 - `lib/google-secrets.ts`: acceso firmado a Google Secret Manager con cuenta de servicio.
+- `lib/google-calendar.ts`: OAuth, renovación de tokens y sincronización de eventos.
+- `lib/observability.ts`: registros operativos estructurados y sanitizados.
 - `lib/invitations.ts` y `lib/email.ts`: tokens de un solo uso y entrega de invitaciones.
 - `app/meta-actions.ts`: intercambio de código, verificación y conexión de Embedded Signup.
 - `lib/dental-data.ts`: consultas y tipos del dominio.

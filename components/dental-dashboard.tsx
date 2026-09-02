@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 
 import {
+  anonymizePatient,
   createAppointment,
   createLocation,
   createOrganization,
@@ -41,13 +42,13 @@ import {
   markConversationRead,
   resendInvitation,
   revokeInvitation,
-  saveIntegrationMetadata,
   sendConversationMessage,
   setAppointmentStatus,
   toggleBotPaused,
   toggleService,
   updateBusinessHours,
   updateOrganizationProfile,
+  updatePatientConsent,
   type ActionResult,
 } from '@/app/actions';
 import {
@@ -351,7 +352,14 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                 isPending={isPending || !canOperate}
               />
             ) : null}
-            {view === 'patients' ? <PatientsView data={data} /> : null}
+            {view === 'patients' ? (
+              <PatientsView
+                data={data}
+                runAction={runAction}
+                isPending={isPending}
+                canManage={canManage}
+              />
+            ) : null}
             {view === 'services' ? (
               <ServicesView
                 services={data.services}
@@ -918,7 +926,16 @@ function InboxView({
                     <p className="mt-1 text-right text-[10px] opacity-50">
                       {item.authorType === 'assistant' ? 'IA · ' : ''}
                       {formatTime(item.createdAt)}
+                      {item.direction === 'outbound' &&
+                      item.deliveryStatus === 'failed'
+                        ? ' · No entregado'
+                        : ''}
                     </p>
+                    {item.lastError ? (
+                      <p className="mt-1 text-[10px] text-red-700">
+                        {item.lastError}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -948,7 +965,17 @@ function InboxView({
   );
 }
 
-function PatientsView({ data }: { data: DashboardData }) {
+function PatientsView({
+  data,
+  runAction,
+  isPending,
+  canManage,
+}: {
+  data: DashboardData;
+  runAction: (operation: () => Promise<ActionResult>) => void;
+  isPending: boolean;
+  canManage: boolean;
+}) {
   const [query, setQuery] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState(
     data.patients[0]?.id ?? '',
@@ -1023,6 +1050,7 @@ function PatientsView({ data }: { data: DashboardData }) {
                 <TableHead>Correo</TableHead>
                 <TableHead>Citas</TableHead>
                 <TableHead>Última visita</TableHead>
+                <TableHead>Mensajes</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -1058,6 +1086,18 @@ function PatientsView({ data }: { data: DashboardData }) {
                       ? formatDate(patient.lastVisitAt)
                       : 'Paciente nuevo'}
                   </TableCell>
+                  <TableCell>
+                    <Switch
+                      aria-label={`Consentimiento de ${patient.fullName}`}
+                      checked={Boolean(patient.marketingOptIn)}
+                      disabled={isPending}
+                      onCheckedChange={(allowed) =>
+                        runAction(() =>
+                          updatePatientConsent(patient.id, allowed),
+                        )
+                      }
+                    />
+                  </TableCell>
                   <TableCell className="text-right">
                     <Button
                       size="sm"
@@ -1082,6 +1122,25 @@ function PatientsView({ data }: { data: DashboardData }) {
             <CardDescription>
               Citas, cambios, lista de espera, anticipos y seguimientos.
             </CardDescription>
+            {canManage ? (
+              <CardAction>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isPending}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Se eliminarán los datos identificables y el contenido de conversaciones. Las citas se conservarán anonimizadas. ¿Continuar?',
+                      )
+                    )
+                      runAction(() => anonymizePatient(selectedPatient.id));
+                  }}
+                >
+                  Anonimizar datos
+                </Button>
+              </CardAction>
+            ) : null}
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -1881,18 +1940,6 @@ function SettingsView({
     );
   }
 
-  function googleCalendarSubmit(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    runAction(() =>
-      saveIntegrationMetadata({
-        clinicId: data.clinic.id,
-        provider: 'google_calendar',
-        externalAccountId: formText(form, 'externalAccountId'),
-      }),
-    );
-  }
-
   function locationSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -2439,21 +2486,38 @@ function SettingsView({
                   }
                 />
                 <form
-                  onSubmit={googleCalendarSubmit}
+                  action="/api/google-calendar/connect"
+                  method="get"
                   className="space-y-2 rounded-xl border p-3"
                 >
-                  <p className="text-sm font-semibold">Google Calendar</p>
+                  <input type="hidden" name="clinicId" value={data.clinic.id} />
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold">Google Calendar</p>
+                    <Badge variant="outline">
+                      {data.integration.googleCalendarConfigured
+                        ? 'Conectado'
+                        : 'Pendiente'}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Autoriza a Asistente H para crear, mover y cancelar eventos
+                    de citas. Usa “primary” para tu calendario principal.
+                  </p>
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                     <Input
-                      name="externalAccountId"
-                      placeholder="ID del calendario o correo de Google"
+                      name="calendarId"
+                      defaultValue={
+                        data.saas.integrations.find(
+                          (item) => item.provider === 'google_calendar',
+                        )?.externalAccountId ?? 'primary'
+                      }
+                      placeholder="primary o ID del calendario"
+                      required
                     />
-                    <Button
-                      type="submit"
-                      variant="outline"
-                      disabled={isPending}
-                    >
-                      Guardar
+                    <Button type="submit" variant="outline">
+                      {data.integration.googleCalendarConfigured
+                        ? 'Reconectar'
+                        : 'Conectar con Google'}
                     </Button>
                   </div>
                 </form>
@@ -2518,6 +2582,14 @@ function SettingsView({
               label="Límites del asistente"
               value="No diagnostica, no receta y escala casos sensibles"
             />
+            {canManage ? (
+              <a
+                href={`/api/export/backup?clinicId=${encodeURIComponent(data.clinic.id)}`}
+                className="inline-flex h-9 w-full items-center justify-center rounded-lg border bg-background px-3 text-sm font-medium hover:bg-muted sm:w-auto"
+              >
+                <FileText className="mr-2 size-4" /> Descargar respaldo JSON
+              </a>
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -2714,6 +2786,7 @@ function NewAppointmentDialog({
           doctorId: formText(form, 'doctorId'),
           startsAtLocal: formText(form, 'startsAtLocal'),
           notes: formText(form, 'notes'),
+          marketingOptIn: form.get('marketingOptIn') === 'on',
         }),
       () => setOpen(false),
     );
@@ -2756,6 +2829,17 @@ function NewAppointmentDialog({
                 placeholder="paciente@correo.com"
               />
             </Field>
+            <label className="flex items-start gap-3 rounded-xl border bg-muted/30 p-3 text-sm">
+              <input
+                className="mt-1 size-4 accent-primary"
+                type="checkbox"
+                name="marketingOptIn"
+              />
+              <span>
+                El paciente autorizó recibir recordatorios y mensajes por
+                WhatsApp. Registra esta opción sólo cuando exista consentimiento.
+              </span>
+            </label>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="serviceId">Servicio</FieldLabel>

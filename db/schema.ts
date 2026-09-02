@@ -63,6 +63,11 @@ export const patients = sqliteTable(
     email: text('email'),
     notes: text('notes'),
     lastVisitAt: text('last_visit_at'),
+    marketingOptIn: integer('marketing_opt_in', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    consentAt: text('consent_at'),
+    consentSource: text('consent_source'),
     createdAt: text('created_at').notNull(),
   },
   (table) => [
@@ -88,6 +93,7 @@ export const appointments = sqliteTable(
     status: text('status').notNull(),
     source: text('source').notNull().default('manual'),
     notes: text('notes'),
+    googleEventId: text('google_event_id'),
     createdAt: text('created_at').notNull(),
   },
   (table) => [
@@ -118,6 +124,8 @@ export const conversations = sqliteTable(
       .notNull()
       .default(false),
     unreadCount: integer('unread_count').notNull().default(0),
+    pendingAction: text('pending_action'),
+    pendingPayload: text('pending_payload'),
     lastMessageAt: text('last_message_at').notNull(),
   },
   (table) => [
@@ -139,6 +147,8 @@ export const messages = sqliteTable(
     authorType: text('author_type').notNull(),
     body: text('body').notNull(),
     externalId: text('external_id'),
+    deliveryStatus: text('delivery_status').notNull().default('stored'),
+    lastError: text('last_error'),
     createdAt: text('created_at').notNull(),
   },
   (table) => [
@@ -146,6 +156,7 @@ export const messages = sqliteTable(
       table.conversationId,
       table.createdAt,
     ),
+    uniqueIndex('idx_messages_external_id').on(table.externalId),
   ],
 );
 
@@ -532,6 +543,8 @@ export const automationRules = sqliteTable(
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
     offsetMinutes: integer('offset_minutes').notNull().default(0),
     template: text('template').notNull(),
+    templateName: text('template_name'),
+    templateLanguage: text('template_language').notNull().default('es_MX'),
     updatedAt: text('updated_at').notNull(),
   },
   (table) => [
@@ -556,9 +569,12 @@ export const scheduledMessages = sqliteTable(
     channel: text('channel').notNull().default('whatsapp'),
     recipient: text('recipient').notNull(),
     body: text('body').notNull(),
+    templateName: text('template_name'),
+    templateLanguage: text('template_language').notNull().default('es_MX'),
     scheduledFor: text('scheduled_for').notNull(),
     status: text('status').notNull().default('pending'),
     attempts: integer('attempts').notNull().default(0),
+    processingStartedAt: text('processing_started_at'),
     lastError: text('last_error'),
     sentAt: text('sent_at'),
     createdAt: text('created_at').notNull(),

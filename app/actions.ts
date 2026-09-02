@@ -6,7 +6,10 @@ import { revalidatePath } from 'next/cache';
 import { ensureDatabase } from '@/db/initialize';
 import { enqueueAppointmentAutomations } from '@/lib/automations';
 import { sendInvitationEmail } from '@/lib/email';
+import { syncAppointmentToGoogleCalendar } from '@/lib/google-calendar';
 import { createInvitationToken, hashInvitationToken } from '@/lib/invitations';
+import { normalizePhone } from '@/lib/phone';
+import { appointmentEnd } from '@/lib/scheduling';
 import {
   ensureSaasUser,
   getRequestUser,
@@ -31,6 +34,7 @@ type AppointmentInput = {
   doctorId: string;
   startsAtLocal: string;
   notes?: string;
+  marketingOptIn?: boolean;
 };
 
 const statusLabelsForAudit: Record<string, string> = {
@@ -52,8 +56,8 @@ export async function createAppointment(
       'staff',
     ]);
     const patientName = input.patientName.trim();
-    const phone = input.phone.trim();
-    if (patientName.length < 2 || phone.replace(/\D/g, '').length < 8)
+    const phone = normalizePhone(input.phone);
+    if (patientName.length < 2 || !phone)
       throw new Error('Escribe el nombre y un teléfono válido.');
     const [service, doctor, clinic] = await Promise.all([
       env.DB.prepare(
@@ -77,21 +81,7 @@ export async function createAppointment(
     const startsAt = parseLocalDate(input.startsAtLocal, clinic.timezone);
     if (!startsAt || Number.isNaN(startsAt.getTime()))
       throw new Error('Selecciona una fecha y hora válidas.');
-    const endsAt = new Date(
-      startsAt.getTime() + service.durationMinutes * 60_000,
-    );
-    const conflict = await env.DB.prepare(
-      `SELECT id FROM appointments WHERE clinic_id = ? AND doctor_id = ? AND status NOT IN ('cancelled', 'no_show') AND starts_at < ? AND ends_at > ? LIMIT 1`,
-    )
-      .bind(
-        input.clinicId,
-        input.doctorId,
-        endsAt.toISOString(),
-        startsAt.toISOString(),
-      )
-      .first<{ id: string }>();
-    if (conflict)
-      throw new Error('Ese horario acaba de ocuparse. Elige otro horario.');
+    const endsAt = appointmentEnd(startsAt, service.durationMinutes);
     const patient = await env.DB.prepare(
       'SELECT id FROM patients WHERE clinic_id = ? AND phone = ?',
     )
@@ -100,36 +90,51 @@ export async function createAppointment(
     const now = new Date().toISOString();
     const patientId = patient?.id ?? `pat_${crypto.randomUUID()}`;
     const appointmentId = `appt_${crypto.randomUUID()}`;
-    const statements = [];
+    const consentAt = input.marketingOptIn ? now : null;
     if (!patient) {
-      statements.push(
-        env.DB.prepare(
-          'INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, created_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)',
-        ).bind(
+      await env.DB.prepare(
+        'INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, marketing_opt_in, consent_at, consent_source, created_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)',
+      )
+        .bind(
           patientId,
           input.clinicId,
           patientName,
           phone,
           input.email?.trim() || null,
+          input.marketingOptIn ? 1 : 0,
+          consentAt,
+          input.marketingOptIn ? 'staff_booking' : null,
           now,
-        ),
-      );
+        )
+        .run();
     } else {
-      statements.push(
-        env.DB.prepare(
-          'UPDATE patients SET full_name = ?, email = COALESCE(?, email) WHERE id = ? AND clinic_id = ?',
-        ).bind(
+      await env.DB.prepare(
+        `UPDATE patients SET full_name = ?, email = COALESCE(?, email), marketing_opt_in = CASE WHEN ? = 1 THEN 1 ELSE marketing_opt_in END, consent_at = CASE WHEN ? = 1 THEN ? ELSE consent_at END, consent_source = CASE WHEN ? = 1 THEN 'staff_booking' ELSE consent_source END WHERE id = ? AND clinic_id = ?`,
+      )
+        .bind(
           patientName,
           input.email?.trim() || null,
+          input.marketingOptIn ? 1 : 0,
+          input.marketingOptIn ? 1 : 0,
+          consentAt,
+          input.marketingOptIn ? 1 : 0,
           patientId,
           input.clinicId,
-        ),
-      );
+        )
+        .run();
     }
-    statements.push(
-      env.DB.prepare(
-        `INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'manual', ?, ?)`,
-      ).bind(
+
+    const appointment = await env.DB.prepare(
+      `INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, 'pending', 'manual', ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM appointments
+         WHERE clinic_id = ? AND doctor_id = ?
+           AND status NOT IN ('cancelled', 'no_show')
+           AND starts_at < ? AND ends_at > ?
+       )`,
+    )
+      .bind(
         appointmentId,
         input.clinicId,
         patientId,
@@ -139,7 +144,16 @@ export async function createAppointment(
         endsAt.toISOString(),
         input.notes?.trim() || null,
         now,
-      ),
+        input.clinicId,
+        input.doctorId,
+        endsAt.toISOString(),
+        startsAt.toISOString(),
+      )
+      .run();
+    if (!appointment.meta.changes)
+      throw new Error('Ese horario acaba de ocuparse. Elige otro horario.');
+
+    await env.DB.batch([
       auditStatement(
         input.clinicId,
         access.user.email,
@@ -158,8 +172,8 @@ export async function createAppointment(
         appointmentId,
         now,
       ),
-    );
-    await env.DB.batch(statements);
+    ]);
+    await syncAppointmentToGoogleCalendar(input.clinicId, appointmentId);
     revalidatePath('/app');
     return {
       ok: true,
@@ -240,6 +254,7 @@ export async function setAppointmentStatus(
     );
     if (status === 'confirmed' || status === 'completed')
       await enqueueAppointmentAutomations(entity.clinicId, id);
+    await syncAppointmentToGoogleCalendar(entity.clinicId, id);
     revalidatePath('/app');
     return { ok: true, message: 'Estado de la cita actualizado.' };
   });
@@ -364,17 +379,15 @@ export async function createProfessional(input: {
       if (!location) throw new Error('La sucursal seleccionada no es válida.');
     }
     const id = `professional_${crypto.randomUUID()}`;
-    const now = new Date().toISOString();
     const statements = [
       env.DB.prepare(
-        `INSERT INTO doctors (id, clinic_id, name, email, specialty, color, active, created_at) VALUES (?, ?, ?, ?, ?, '#248a73', 1, ?)`,
+        `INSERT INTO doctors (id, clinic_id, name, email, specialty, color, active) VALUES (?, ?, ?, ?, ?, '#248a73', 1)`,
       ).bind(
         id,
         input.clinicId,
         input.name.trim(),
         input.email?.trim() || null,
         input.specialty?.trim() || 'Profesional',
-        now,
       ),
       auditStatement(
         input.clinicId,
@@ -492,7 +505,7 @@ export async function markConversationRead(
     .bind(conversationId)
     .first<{ clinicId: string }>();
   if (!entity) return;
-  await requireClinicAccess(entity.clinicId);
+  await requireClinicAccess(entity.clinicId, ['owner', 'admin', 'staff']);
   await env.DB.prepare(
     'UPDATE conversations SET unread_count = 0 WHERE id = ? AND clinic_id = ?',
   )
@@ -520,20 +533,33 @@ export async function sendConversationMessage(
       'staff',
     ]);
     const now = new Date().toISOString();
+    const messageId = `msg_${crypto.randomUUID()}`;
     await env.DB.batch([
       env.DB.prepare(
-        `INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, created_at) VALUES (?, ?, 'outbound', 'staff', ?, NULL, ?)`,
-      ).bind(`msg_${crypto.randomUUID()}`, conversationId, message, now),
+        `INSERT INTO messages (id, conversation_id, direction, author_type, body, external_id, delivery_status, last_error, created_at) VALUES (?, ?, 'outbound', 'staff', ?, NULL, 'pending', NULL, ?)`,
+      ).bind(messageId, conversationId, message, now),
       env.DB.prepare(
         'UPDATE conversations SET last_message_at = ?, unread_count = 0 WHERE id = ? AND clinic_id = ?',
       ).bind(now, conversationId, conversation.clinicId),
     ]);
-    if (conversation.phone)
-      await sendTenantWhatsAppText(
+    const delivery = conversation.phone
+      ? await sendTenantWhatsAppText(
         conversation.clinicId,
         conversation.phone,
         message,
-      );
+      )
+      : { sent: false, error: 'El paciente no tiene un teléfono registrado.' };
+    await env.DB.prepare(
+      `UPDATE messages SET external_id = ?, delivery_status = ?, last_error = ? WHERE id = ? AND conversation_id = ?`,
+    )
+      .bind(
+        delivery.externalId ?? null,
+        delivery.sent ? 'accepted' : 'failed',
+        delivery.error ?? null,
+        messageId,
+        conversationId,
+      )
+      .run();
     await logAudit(
       conversation.clinicId,
       access.user.email,
@@ -542,6 +568,10 @@ export async function sendConversationMessage(
       conversationId,
       null,
     );
+    if (!delivery.sent)
+      throw new Error(
+        delivery.error ?? 'Meta no confirmó la entrega del mensaje.',
+      );
     revalidatePath('/app');
     return { ok: true, message: 'Mensaje enviado.' };
   });
@@ -1031,6 +1061,93 @@ export async function saveIntegrationMetadata(input: {
       ok: true,
       message:
         'Datos de integración guardados. Las llaves secretas se conectan desde el servidor.',
+    };
+  });
+}
+
+export async function updatePatientConsent(
+  patientId: string,
+  allowed: boolean,
+): Promise<ActionResult> {
+  return actionResult(async () => {
+    const patient = await env.DB.prepare(
+      `SELECT clinic_id AS clinicId FROM patients WHERE id = ?`,
+    )
+      .bind(patientId)
+      .first<{ clinicId: string }>();
+    if (!patient) throw new Error('No se encontró el paciente.');
+    const access = await requireClinicAccess(patient.clinicId, [
+      'owner',
+      'admin',
+      'staff',
+    ]);
+    await env.DB.prepare(
+      `UPDATE patients SET marketing_opt_in = ?, consent_at = ?, consent_source = ? WHERE id = ? AND clinic_id = ?`,
+    )
+      .bind(
+        allowed ? 1 : 0,
+        allowed ? new Date().toISOString() : null,
+        allowed ? 'staff_confirmation' : 'revoked',
+        patientId,
+        patient.clinicId,
+      )
+      .run();
+    await logAudit(
+      patient.clinicId,
+      access.user.email,
+      allowed ? 'grant_marketing_consent' : 'revoke_marketing_consent',
+      'patient',
+      patientId,
+      null,
+    );
+    revalidatePath('/app');
+    return {
+      ok: true,
+      message: allowed
+        ? 'Consentimiento registrado.'
+        : 'Consentimiento revocado.',
+    };
+  });
+}
+
+export async function anonymizePatient(
+  patientId: string,
+): Promise<ActionResult> {
+  return actionResult(async () => {
+    const patient = await env.DB.prepare(
+      `SELECT clinic_id AS clinicId FROM patients WHERE id = ?`,
+    )
+      .bind(patientId)
+      .first<{ clinicId: string }>();
+    if (!patient) throw new Error('No se encontró el paciente.');
+    const access = await requireClinicAccess(patient.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    const now = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE messages SET body = '[Contenido eliminado por solicitud de privacidad]', last_error = NULL WHERE conversation_id IN (SELECT id FROM conversations WHERE patient_id = ? AND clinic_id = ?)`,
+      ).bind(patientId, patient.clinicId),
+      env.DB.prepare(
+        `UPDATE scheduled_messages SET status = 'cancelled', recipient = '', body = '[Eliminado]', last_error = 'Datos anonimizados' WHERE patient_id = ? AND clinic_id = ? AND status = 'pending'`,
+      ).bind(patientId, patient.clinicId),
+      env.DB.prepare(
+        `UPDATE patients SET full_name = 'Paciente anonimizado', phone = ?, email = NULL, notes = NULL, marketing_opt_in = 0, consent_at = NULL, consent_source = 'privacy_request' WHERE id = ? AND clinic_id = ?`,
+      ).bind(`anon_${patientId}`, patientId, patient.clinicId),
+      auditStatement(
+        patient.clinicId,
+        access.user.email,
+        'anonymize',
+        'patient',
+        patientId,
+        { at: now },
+      ),
+    ]);
+    revalidatePath('/app');
+    return {
+      ok: true,
+      message: 'Los datos identificables del paciente fueron anonimizados.',
     };
   });
 }

@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
+import Link from 'next/link';
 
 import { chatGPTSignInPath, getChatGPTUser } from '@/app/chatgpt-auth';
 import { Button } from '@/components/ui/button';
@@ -136,6 +137,19 @@ export default async function Home() {
           </div>
         </div>
       </section>
+      <footer className="border-t border-[#dce8e3] bg-white px-5 py-7 text-sm text-[#62756f]">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
+          <p>© 2026 Asistente H</p>
+          <div className="flex gap-5">
+            <Link className="hover:text-[#1e806a]" href="/privacidad">
+              Privacidad
+            </Link>
+            <Link className="hover:text-[#1e806a]" href="/terminos">
+              Términos
+            </Link>
+          </div>
+        </div>
+      </footer>
     </main>
   );
 }

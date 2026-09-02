@@ -1,0 +1,1 @@
+ALTER TABLE `scheduled_messages` ADD `processing_started_at` text;

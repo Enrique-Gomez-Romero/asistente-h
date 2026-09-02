@@ -6,10 +6,10 @@ const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS clinics (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, timezone TEXT NOT NULL DEFAULT 'America/Mexico_City', phone TEXT, address TEXT, currency TEXT NOT NULL DEFAULT 'MXN', created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS doctors (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), name TEXT NOT NULL, email TEXT, specialty TEXT, color TEXT NOT NULL DEFAULT '#2e9b7f', active INTEGER NOT NULL DEFAULT 1)`,
   `CREATE TABLE IF NOT EXISTS services (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), name TEXT NOT NULL, category TEXT NOT NULL, description TEXT, duration_minutes INTEGER NOT NULL, price_cents INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1)`,
-  `CREATE TABLE IF NOT EXISTS patients (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), full_name TEXT NOT NULL, phone TEXT NOT NULL, email TEXT, notes TEXT, last_visit_at TEXT, created_at TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS appointments (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT REFERENCES patients(id), doctor_id TEXT NOT NULL REFERENCES doctors(id), service_id TEXT REFERENCES services(id), starts_at TEXT NOT NULL, ends_at TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual', notes TEXT, created_at TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT REFERENCES patients(id), channel TEXT NOT NULL DEFAULT 'whatsapp', status TEXT NOT NULL DEFAULT 'open', assigned_to TEXT, bot_paused INTEGER NOT NULL DEFAULT 0, unread_count INTEGER NOT NULL DEFAULT 0, last_message_at TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL REFERENCES conversations(id), direction TEXT NOT NULL, author_type TEXT NOT NULL, body TEXT NOT NULL, external_id TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS patients (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), full_name TEXT NOT NULL, phone TEXT NOT NULL, email TEXT, notes TEXT, last_visit_at TEXT, marketing_opt_in INTEGER NOT NULL DEFAULT 0, consent_at TEXT, consent_source TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS appointments (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT REFERENCES patients(id), doctor_id TEXT NOT NULL REFERENCES doctors(id), service_id TEXT REFERENCES services(id), starts_at TEXT NOT NULL, ends_at TEXT NOT NULL, status TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual', notes TEXT, google_event_id TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT REFERENCES patients(id), channel TEXT NOT NULL DEFAULT 'whatsapp', status TEXT NOT NULL DEFAULT 'open', assigned_to TEXT, bot_paused INTEGER NOT NULL DEFAULT 0, unread_count INTEGER NOT NULL DEFAULT 0, pending_action TEXT, pending_payload TEXT, last_message_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL REFERENCES conversations(id), direction TEXT NOT NULL, author_type TEXT NOT NULL, body TEXT NOT NULL, external_id TEXT, delivery_status TEXT NOT NULL DEFAULT 'stored', last_error TEXT, created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS faq_items (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), question TEXT NOT NULL, answer TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)`,
   `CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), actor TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS saas_users (id TEXT PRIMARY KEY NOT NULL, email TEXT NOT NULL, full_name TEXT, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL)`,
@@ -29,8 +29,8 @@ const schemaStatements = [
   `CREATE TABLE IF NOT EXISTS doctor_locations (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), doctor_id TEXT NOT NULL REFERENCES doctors(id), location_id TEXT NOT NULL REFERENCES locations(id), active INTEGER NOT NULL DEFAULT 1)`,
   `CREATE TABLE IF NOT EXISTS doctor_hours (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), doctor_id TEXT NOT NULL REFERENCES doctors(id), location_id TEXT REFERENCES locations(id), day_of_week INTEGER NOT NULL, opens_at TEXT NOT NULL, closes_at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1)`,
   `CREATE TABLE IF NOT EXISTS waitlist_entries (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT NOT NULL REFERENCES patients(id), service_id TEXT REFERENCES services(id), doctor_id TEXT REFERENCES doctors(id), preferred_date_from TEXT, preferred_date_to TEXT, preferred_time TEXT, status TEXT NOT NULL DEFAULT 'waiting', notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS automation_rules (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), kind TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, offset_minutes INTEGER NOT NULL DEFAULT 0, template TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT REFERENCES patients(id), appointment_id TEXT REFERENCES appointments(id), campaign_id TEXT, kind TEXT NOT NULL, channel TEXT NOT NULL DEFAULT 'whatsapp', recipient TEXT NOT NULL, body TEXT NOT NULL, scheduled_for TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, sent_at TEXT, created_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS automation_rules (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), kind TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, offset_minutes INTEGER NOT NULL DEFAULT 0, template TEXT NOT NULL, template_name TEXT, template_language TEXT NOT NULL DEFAULT 'es_MX', updated_at TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT REFERENCES patients(id), appointment_id TEXT REFERENCES appointments(id), campaign_id TEXT, kind TEXT NOT NULL, channel TEXT NOT NULL DEFAULT 'whatsapp', recipient TEXT NOT NULL, body TEXT NOT NULL, template_name TEXT, template_language TEXT NOT NULL DEFAULT 'es_MX', scheduled_for TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, processing_started_at TEXT, last_error TEXT, sent_at TEXT, created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), name TEXT NOT NULL, audience TEXT NOT NULL DEFAULT 'inactive_patients', template TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', scheduled_for TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS campaign_recipients (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), campaign_id TEXT NOT NULL REFERENCES campaigns(id), patient_id TEXT NOT NULL REFERENCES patients(id), status TEXT NOT NULL DEFAULT 'queued', sent_at TEXT)`,
   `CREATE TABLE IF NOT EXISTS surveys (id TEXT PRIMARY KEY NOT NULL, clinic_id TEXT NOT NULL REFERENCES clinics(id), patient_id TEXT NOT NULL REFERENCES patients(id), appointment_id TEXT REFERENCES appointments(id), score INTEGER, comment TEXT, status TEXT NOT NULL DEFAULT 'pending', sent_at TEXT, responded_at TEXT, created_at TEXT NOT NULL)`,
@@ -47,6 +47,7 @@ const schemaStatements = [
   `CREATE INDEX IF NOT EXISTS idx_appointments_patient_id ON appointments(patient_id)`,
   `CREATE INDEX IF NOT EXISTS idx_conversations_clinic_last_message ON conversations(clinic_id, last_message_at)`,
   `CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external_id ON messages(external_id)`,
   `CREATE INDEX IF NOT EXISTS idx_faq_clinic_active ON faq_items(clinic_id, active)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_clinic_created ON audit_logs(clinic_id, created_at)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_saas_users_email ON saas_users(email)`,
@@ -88,6 +89,7 @@ export function ensureDatabase(): Promise<void> {
 async function initializeDatabase(): Promise<void> {
   const d1 = env.DB;
   await d1.batch(schemaStatements.map((statement) => d1.prepare(statement)));
+  await ensureCompatibilityColumns(d1);
   const existing = await d1
     .prepare('SELECT id FROM clinics LIMIT 1')
     .first<{ id: string }>();
@@ -474,6 +476,85 @@ async function initializeDatabase(): Promise<void> {
 
   await seedSaasData(d1);
   await d1.prepare('PRAGMA optimize').run();
+}
+
+async function ensureCompatibilityColumns(d1: typeof env.DB): Promise<void> {
+  const additions: Record<string, Array<{ name: string; sql: string }>> = {
+    appointments: [
+      {
+        name: 'google_event_id',
+        sql: 'ALTER TABLE appointments ADD COLUMN google_event_id TEXT',
+      },
+    ],
+    patients: [
+      {
+        name: 'marketing_opt_in',
+        sql: 'ALTER TABLE patients ADD COLUMN marketing_opt_in INTEGER NOT NULL DEFAULT 0',
+      },
+      {
+        name: 'consent_at',
+        sql: 'ALTER TABLE patients ADD COLUMN consent_at TEXT',
+      },
+      {
+        name: 'consent_source',
+        sql: 'ALTER TABLE patients ADD COLUMN consent_source TEXT',
+      },
+    ],
+    conversations: [
+      {
+        name: 'pending_action',
+        sql: 'ALTER TABLE conversations ADD COLUMN pending_action TEXT',
+      },
+      {
+        name: 'pending_payload',
+        sql: 'ALTER TABLE conversations ADD COLUMN pending_payload TEXT',
+      },
+    ],
+    messages: [
+      {
+        name: 'delivery_status',
+        sql: "ALTER TABLE messages ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'stored'",
+      },
+      {
+        name: 'last_error',
+        sql: 'ALTER TABLE messages ADD COLUMN last_error TEXT',
+      },
+    ],
+    automation_rules: [
+      {
+        name: 'template_name',
+        sql: 'ALTER TABLE automation_rules ADD COLUMN template_name TEXT',
+      },
+      {
+        name: 'template_language',
+        sql: "ALTER TABLE automation_rules ADD COLUMN template_language TEXT NOT NULL DEFAULT 'es_MX'",
+      },
+    ],
+    scheduled_messages: [
+      {
+        name: 'template_name',
+        sql: 'ALTER TABLE scheduled_messages ADD COLUMN template_name TEXT',
+      },
+      {
+        name: 'template_language',
+        sql: "ALTER TABLE scheduled_messages ADD COLUMN template_language TEXT NOT NULL DEFAULT 'es_MX'",
+      },
+      {
+        name: 'processing_started_at',
+        sql: 'ALTER TABLE scheduled_messages ADD COLUMN processing_started_at TEXT',
+      },
+    ],
+  };
+
+  for (const [table, columns] of Object.entries(additions)) {
+    const info = await d1
+      .prepare(`PRAGMA table_info(${table})`)
+      .all<{ name: string }>();
+    const existing = new Set(info.results.map((column) => column.name));
+    const missing = columns.filter((column) => !existing.has(column.name));
+    if (missing.length)
+      await d1.batch(missing.map((column) => d1.prepare(column.sql)));
+  }
 }
 
 async function seedSaasData(d1: typeof env.DB): Promise<void> {

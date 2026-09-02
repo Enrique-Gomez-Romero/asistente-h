@@ -62,3 +62,16 @@
 - [ ] Prueba de límites mensuales y cambio de periodo de suscripción.
 - [ ] Configurar Cloud Scheduler con `AUTOMATION_SECRET` y comprobar reintentos.
 - [ ] Probar CSV, iCalendar y, si se habilita, OAuth de Google Calendar.
+
+## Controles ya implementados en código
+
+- [x] Escritura atómica para impedir traslapes del mismo profesional.
+- [x] Idempotencia de mensajes entrantes por ID externo de Meta.
+- [x] Firma de webhook obligatoria y límite de tamaño del cuerpo.
+- [x] Estado de entrega y error de mensajes salientes.
+- [x] Reclamación atómica y recuperación de automatizaciones interrumpidas.
+- [x] Vigencia y límites de suscripción aplicados en el servidor.
+- [x] Consentimiento de campañas y anonimización de pacientes.
+- [x] OAuth y sincronización de Google Calendar por organización.
+- [x] Respaldo JSON sin secretos y endpoint de salud.
+- [x] Migraciones versionadas y pruebas automáticas del dominio.

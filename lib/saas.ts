@@ -363,14 +363,27 @@ export async function requireClinicAccess(
     .first<{ role: MembershipRole }>();
   if (!membership || !allowedRoles.includes(membership.role))
     throw new Error('No tienes permisos para realizar esta acción.');
-  const accountState = await env.DB.prepare(
-    `SELECT status FROM organization_states WHERE clinic_id = ?`,
-  )
-    .bind(clinicId)
-    .first<{ status: string }>();
+  const [accountState, subscription] = await Promise.all([
+    env.DB.prepare(`SELECT status FROM organization_states WHERE clinic_id = ?`)
+      .bind(clinicId)
+      .first<{ status: string }>(),
+    env.DB.prepare(
+      `SELECT status, current_period_end AS periodEnd FROM subscriptions WHERE clinic_id = ?`,
+    )
+      .bind(clinicId)
+      .first<{ status: string; periodEnd: string }>(),
+  ]);
   if (accountState?.status === 'suspended')
     throw new Error(
       'La organización está suspendida. Contacta al administrador de la plataforma.',
+    );
+  if (
+    !subscription ||
+    !['trialing', 'active'].includes(subscription.status) ||
+    new Date(subscription.periodEnd).getTime() < Date.now()
+  )
+    throw new Error(
+      'La suscripción no está vigente. Contacta al administrador de la plataforma.',
     );
   return { user, role: membership.role, isPlatformAdmin: false };
 }

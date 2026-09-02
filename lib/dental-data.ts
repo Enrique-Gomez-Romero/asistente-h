@@ -39,6 +39,8 @@ export type PatientRecord = {
   email: string | null;
   notes: string | null;
   lastVisitAt: string | null;
+  marketingOptIn: number;
+  consentAt: string | null;
   createdAt: string;
   appointmentCount: number;
 };
@@ -66,6 +68,8 @@ export type MessageRecord = {
   direction: string;
   authorType: string;
   body: string;
+  deliveryStatus: string;
+  lastError: string | null;
   createdAt: string;
 };
 
@@ -247,7 +251,7 @@ export async function getDashboardData(
       .all<ServiceRecord>(),
     d1
       .prepare(
-        'SELECT p.id, p.full_name AS fullName, p.phone, p.email, p.notes, p.last_visit_at AS lastVisitAt, p.created_at AS createdAt, COUNT(a.id) AS appointmentCount FROM patients p LEFT JOIN appointments a ON a.patient_id = p.id WHERE p.clinic_id = ? GROUP BY p.id ORDER BY p.full_name',
+        'SELECT p.id, p.full_name AS fullName, p.phone, p.email, p.notes, p.last_visit_at AS lastVisitAt, p.marketing_opt_in AS marketingOptIn, p.consent_at AS consentAt, p.created_at AS createdAt, COUNT(a.id) AS appointmentCount FROM patients p LEFT JOIN appointments a ON a.patient_id = p.id WHERE p.clinic_id = ? GROUP BY p.id ORDER BY p.full_name',
       )
       .bind(clinicId)
       .all<PatientRecord>(),
@@ -265,7 +269,7 @@ export async function getDashboardData(
       .all<Omit<ConversationRecord, 'messages'>>(),
     d1
       .prepare(
-        `SELECT m.id, m.conversation_id AS conversationId, m.direction, m.author_type AS authorType, m.body, m.created_at AS createdAt FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.clinic_id = ? ORDER BY m.created_at`,
+        `SELECT m.id, m.conversation_id AS conversationId, m.direction, m.author_type AS authorType, m.body, m.delivery_status AS deliveryStatus, m.last_error AS lastError, m.created_at AS createdAt FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.clinic_id = ? ORDER BY m.created_at`,
       )
       .bind(clinicId)
       .all<MessageRecord>(),
@@ -414,6 +418,7 @@ export async function getAvailableSlots(
   clinicId: string,
   date: string,
   doctorId?: string,
+  serviceId?: string,
 ): Promise<string[]> {
   await ensureDatabase();
   const clinic = await env.DB.prepare(
@@ -423,10 +428,22 @@ export async function getAvailableSlots(
     .first<{ timezone: string }>();
   if (!clinic || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
   const dayOfWeek = new Date(`${date}T12:00:00Z`).getUTCDay();
-  const hours = await env.DB.prepare(
-    'SELECT opens_at AS opensAt, closes_at AS closesAt, break_start AS breakStart, break_end AS breakEnd, active FROM business_hours WHERE clinic_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1',
+  const doctor = doctorId
+    ? await env.DB.prepare(
+        `SELECT id FROM doctors WHERE id = ? AND clinic_id = ? AND active = 1`,
+      )
+        .bind(doctorId, clinicId)
+        .first<{ id: string }>()
+    : await env.DB.prepare(
+        `SELECT id FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 1`,
+      )
+        .bind(clinicId)
+        .first<{ id: string }>();
+  if (!doctor) return [];
+  const doctorHours = await env.DB.prepare(
+    `SELECT opens_at AS opensAt, closes_at AS closesAt, NULL AS breakStart, NULL AS breakEnd, active FROM doctor_hours WHERE clinic_id = ? AND doctor_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1`,
   )
-    .bind(clinicId, dayOfWeek)
+    .bind(clinicId, doctor.id, dayOfWeek)
     .first<{
       opensAt: string;
       closesAt: string;
@@ -434,7 +451,28 @@ export async function getAvailableSlots(
       breakEnd: string | null;
       active: number;
     }>();
+  const hours =
+    doctorHours ??
+    (await env.DB.prepare(
+      'SELECT opens_at AS opensAt, closes_at AS closesAt, break_start AS breakStart, break_end AS breakEnd, active FROM business_hours WHERE clinic_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1',
+    )
+      .bind(clinicId, dayOfWeek)
+      .first<{
+        opensAt: string;
+        closesAt: string;
+        breakStart: string | null;
+        breakEnd: string | null;
+        active: number;
+      }>());
   if (!hours) return [];
+  const service = serviceId
+    ? await env.DB.prepare(
+        `SELECT duration_minutes AS durationMinutes FROM services WHERE id = ? AND clinic_id = ? AND active = 1`,
+      )
+        .bind(serviceId, clinicId)
+        .first<{ durationMinutes: number }>()
+    : null;
+  const durationMinutes = Math.max(service?.durationMinutes ?? 30, 10);
   const dayStart = zonedLocalToUtc(
     date,
     '00:00',
@@ -447,13 +485,9 @@ export async function getAvailableSlots(
     '00:00',
     clinic.timezone,
   ).toISOString();
-  const query = doctorId
-    ? env.DB.prepare(
-        `SELECT starts_at AS startsAt, ends_at AS endsAt FROM appointments WHERE clinic_id = ? AND doctor_id = ? AND starts_at >= ? AND starts_at < ? AND status NOT IN ('cancelled', 'no_show')`,
-      ).bind(clinicId, doctorId, dayStart, dayEnd)
-    : env.DB.prepare(
-        `SELECT starts_at AS startsAt, ends_at AS endsAt FROM appointments WHERE clinic_id = ? AND starts_at >= ? AND starts_at < ? AND status NOT IN ('cancelled', 'no_show')`,
-      ).bind(clinicId, dayStart, dayEnd);
+  const query = env.DB.prepare(
+    `SELECT starts_at AS startsAt, ends_at AS endsAt FROM appointments WHERE clinic_id = ? AND doctor_id = ? AND starts_at >= ? AND starts_at < ? AND status NOT IN ('cancelled', 'no_show')`,
+  ).bind(clinicId, doctor.id, dayStart, dayEnd);
   const busy = await query.all<{ startsAt: string; endsAt: string }>();
   const slots: string[] = [];
   const opening = zonedLocalToUtc(
@@ -474,10 +508,10 @@ export async function getAvailableSlots(
     : null;
   for (
     let value = opening;
-    value + 30 * 60_000 <= closing;
+    value + durationMinutes * 60_000 <= closing;
     value += 30 * 60_000
   ) {
-    const slotEnd = value + 30 * 60_000;
+    const slotEnd = value + durationMinutes * 60_000;
     const insideBreak =
       breakStart !== null &&
       breakEnd !== null &&

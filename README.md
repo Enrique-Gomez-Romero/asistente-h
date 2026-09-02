@@ -13,7 +13,7 @@ Base funcional multiempresa para vender recepción por WhatsApp e IA mediante su
 - Simulador de conversaciones sin credenciales externas.
 - Gemini API central con herramientas controladas y consumo medido por negocio.
 - Webhook de verificación y recepción de Meta WhatsApp.
-- Validación de firma `x-hub-signature-256` cuando existe `META_APP_SECRET`.
+- Validación obligatoria de firma `x-hub-signature-256`; el webhook se desactiva si falta `META_APP_SECRET`.
 - Bitácora de cambios, indicadores y reglas de seguridad clínica.
 - Organizaciones ilimitadas a nivel plataforma y selector de negocio activo.
 - Inicio de sesión con ChatGPT, membresías y roles `owner`, `admin`, `staff` y `viewer`.
@@ -21,15 +21,17 @@ Base funcional multiempresa para vender recepción por WhatsApp e IA mediante su
 - Onboarding para consultorios dentales y otros tipos de negocio.
 - Planes, periodos de prueba, límites de usuarios, sedes, conversaciones y solicitudes de IA.
 - Medición mensual de consumo y panel global para el administrador de la plataforma.
-- Configuración editable de datos, horarios, equipo e identificadores de integración.
+- Configuración editable de datos, horarios, equipo e integraciones autorizadas.
 - Recordatorios, confirmación, cancelación, solicitud de reprogramación y seguimiento por WhatsApp.
 - Lista de espera, campañas de reactivación y encuestas de satisfacción.
 - Anticipos y pagos de suscripción por transferencia con verificación manual.
-- Historial unificado por paciente, notificaciones al personal y exportación CSV/iCalendar.
+- Historial unificado por paciente, notificaciones al personal y exportación CSV, iCalendar y respaldo JSON.
 - Centro de administración de organizaciones, planes, vigencias, suspensiones, transferencias y facturas.
 - Alta controlada: solo la plataforma crea negocios y los clientes entran mediante invitaciones de un solo uso.
 - Meta Embedded Signup preparado para autorizar el WABA y número propiedad de cada cliente.
 - Tokens de Meta por organización almacenados fuera de D1 mediante Google Secret Manager.
+- OAuth de Google Calendar por organización y sincronización de altas, cambios y cancelaciones.
+- Consentimiento de campañas, anonimización de pacientes y estados de entrega de mensajes.
 
 ## Ejecutar localmente
 
@@ -80,6 +82,16 @@ No se conecta una pasarela automática en esta etapa. El administrador de Asiste
 
 El endpoint protegido `POST /api/jobs/automations` procesa mensajes vencidos. En producción debe ejecutarse periódicamente con Cloud Scheduler o Cloud Tasks enviando `Authorization: Bearer AUTOMATION_SECRET`.
 
+Los envíos automáticos fuera de la ventana de atención usan exclusivamente plantillas aprobadas. Configura los nombres exactos indicados en `.env.example`. La cola toma cada trabajo de forma atómica y recupera ejecuciones interrumpidas después de 15 minutos.
+
+## Google Calendar
+
+Configura `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_STATE_SECRET` y `PUBLIC_APP_URL`. En Google Cloud, registra exactamente `PUBLIC_APP_URL/api/google-calendar/callback` como URI de redirección. Después, cada propietario o administrador conecta su calendario desde Configuración. La agenda interna continúa siendo la fuente de verdad.
+
+## Respaldo y monitoreo
+
+Propietarios y administradores pueden descargar un respaldo JSON aislado desde Configuración. El archivo omite secretos y tokens de invitación. El endpoint `/api/health` comprueba la disponibilidad de D1 y los procesos críticos producen registros JSON sin datos clínicos ni credenciales. Consulta [Operación y recuperación](docs/OPERATIONS.md).
+
 ## Integración de IA
 
 Asistente H utiliza una sola cuenta de Gemini para toda la plataforma. `GEMINI_API_KEY` y `GEMINI_MODEL` son secretos globales administrados únicamente por la plataforma; los clientes no conectan cuentas de IA ni pueden ver la llave. El consumo continúa registrándose por organización para aplicar los límites de cada plan.
@@ -123,12 +135,13 @@ La versión alojada usa D1 y acceso privado. Para una operación comercial en Go
 - Cargar las credenciales de Resend y verificar el remitente para activar el envío real de invitaciones.
 - Cargar la aplicación de Meta y la cuenta de servicio de Google para activar Embedded Signup y Secret Manager.
 - Configurar Cloud Scheduler para recordatorios y campañas.
-- Crear credenciales OAuth de Google si se desea sincronización directa; CSV e iCalendar ya funcionan sin ellas.
+- Crear credenciales OAuth de Google y registrar la URI de retorno para activar la sincronización directa; CSV e iCalendar funcionan sin ellas.
 
 ## Validación
 
 ```bash
 pnpm db:generate
+pnpm test
 pnpm lint
 pnpm build
 ```

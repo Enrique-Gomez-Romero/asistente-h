@@ -353,7 +353,7 @@ export async function createReactivationCampaign(input: {
       Date.now() - 180 * 24 * 60 * 60_000,
     ).toISOString();
     const patients = await env.DB.prepare(
-      `SELECT id, full_name AS fullName, phone FROM patients WHERE clinic_id = ? AND (last_visit_at IS NULL OR last_visit_at < ?) ORDER BY created_at LIMIT 500`,
+      `SELECT id, full_name AS fullName, phone FROM patients WHERE clinic_id = ? AND marketing_opt_in = 1 AND (last_visit_at IS NULL OR last_visit_at < ?) ORDER BY created_at LIMIT 500`,
     )
       .bind(input.clinicId, inactiveBefore)
       .all<{ id: string; fullName: string; phone: string }>();
@@ -390,7 +390,7 @@ export async function createReactivationCampaign(input: {
           patient.id,
         ),
         env.DB.prepare(
-          `INSERT INTO scheduled_messages (id, clinic_id, patient_id, appointment_id, campaign_id, kind, channel, recipient, body, scheduled_for, status, attempts, last_error, sent_at, created_at) VALUES (?, ?, ?, NULL, ?, 'reactivation', 'whatsapp', ?, ?, ?, 'pending', 0, NULL, NULL, ?)`,
+          `INSERT INTO scheduled_messages (id, clinic_id, patient_id, appointment_id, campaign_id, kind, channel, recipient, body, template_name, template_language, scheduled_for, status, attempts, last_error, sent_at, created_at) VALUES (?, ?, ?, NULL, ?, 'reactivation', 'whatsapp', ?, ?, ?, 'es_MX', ?, 'pending', 0, NULL, NULL, ?)`,
         ).bind(
           `scheduled_${crypto.randomUUID()}`,
           input.clinicId,
@@ -398,6 +398,7 @@ export async function createReactivationCampaign(input: {
           campaignId,
           patient.phone,
           body,
+          process.env.WHATSAPP_TEMPLATE_REACTIVATION ?? null,
           scheduledFor,
           now,
         ),
