@@ -724,7 +724,7 @@ function AssistantCard({
             <Bot className="size-[18px] text-[#78dfc1]" />
           </div>
           <Badge className="bg-[#2e9b7f] text-white">
-            {data.integration.openAiConfigured ? 'IA conectada' : 'Modo demo'}
+            {data.integration.aiConfigured ? 'Gemini conectado' : 'Modo demo'}
           </Badge>
         </div>
         <CardTitle className="text-white">Prueba la recepción con IA</CardTitle>
@@ -770,8 +770,8 @@ function AssistantCard({
         </form>
         <div className="flex items-center gap-2 text-[11px] text-white/45">
           <span className="size-1.5 rounded-full bg-[#78dfc1]" />
-          {data.integration.openAiConfigured
-            ? 'Respuestas generadas con herramientas controladas'
+          {data.integration.aiConfigured
+            ? 'Gemini central con herramientas controladas'
             : 'Simulador seguro sin credenciales externas'}
         </div>
         <Button
@@ -1881,18 +1881,6 @@ function SettingsView({
     );
   }
 
-  function aiSubmit(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    runAction(() =>
-      saveIntegrationMetadata({
-        clinicId: data.clinic.id,
-        provider: formText(form, 'provider') as 'openai' | 'gemini',
-        externalAccountId: formText(form, 'externalAccountId'),
-      }),
-    );
-  }
-
   function googleCalendarSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -2403,15 +2391,15 @@ function SettingsView({
           <CardHeader>
             <CardTitle>Integraciones</CardTitle>
             <CardDescription>
-              Cada negocio conecta sus propias cuentas; los secretos permanecen
-              en el servidor.
+              Gemini es administrado de forma central; Meta y Calendar se
+              conectan por negocio.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <IntegrationRow
-              name="OpenAI o Gemini"
-              description="Motor de conversación y herramientas"
-              configured={data.integration.openAiConfigured}
+              name="Gemini central"
+              description="Una cuenta para todos los negocios; administrada por la plataforma"
+              configured={data.integration.aiConfigured}
             />
             <IntegrationRow
               name="WhatsApp Cloud API"
@@ -2430,33 +2418,14 @@ function SettingsView({
             />
             {canManage ? (
               <>
-                <form
-                  onSubmit={aiSubmit}
-                  className="space-y-2 rounded-xl border p-3"
-                >
-                  <p className="text-sm font-semibold">Proveedor de IA</p>
-                  <div className="grid gap-2 sm:grid-cols-[130px_1fr_auto]">
-                    <NativeSelect name="provider" defaultValue="openai">
-                      <NativeSelectOption value="openai">
-                        OpenAI
-                      </NativeSelectOption>
-                      <NativeSelectOption value="gemini">
-                        Gemini
-                      </NativeSelectOption>
-                    </NativeSelect>
-                    <Input
-                      name="externalAccountId"
-                      placeholder="Proyecto o cuenta (sin API key)"
-                    />
-                    <Button
-                      type="submit"
-                      variant="outline"
-                      disabled={isPending}
-                    >
-                      Guardar
-                    </Button>
-                  </div>
-                </form>
+                <div className="rounded-xl border bg-muted/20 p-3">
+                  <p className="text-sm font-semibold">Gemini central</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    La cuenta y la llave son administradas únicamente por
+                    Asistente H. Este negocio consume su límite mensual sin ver
+                    ni modificar la credencial global.
+                  </p>
+                </div>
                 <MetaEmbeddedSignup
                   clinicId={data.clinic.id}
                   appId={data.integration.metaEmbeddedSignup.appId}

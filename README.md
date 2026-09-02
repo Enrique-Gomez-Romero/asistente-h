@@ -11,7 +11,7 @@ Base funcional multiempresa para vender recepción por WhatsApp e IA mediante su
 - Bandeja conjunta para IA y personal humano.
 - Pausa y reanudación del asistente por conversación.
 - Simulador de conversaciones sin credenciales externas.
-- OpenAI Responses API con herramientas controladas.
+- Gemini API central con herramientas controladas y consumo medido por negocio.
 - Webhook de verificación y recepción de Meta WhatsApp.
 - Validación de firma `x-hub-signature-256` cuando existe `META_APP_SECRET`.
 - Bitácora de cambios, indicadores y reglas de seguridad clínica.
@@ -82,7 +82,9 @@ El endpoint protegido `POST /api/jobs/automations` procesa mensajes vencidos. En
 
 ## Integración de IA
 
-El asistente no tiene acceso directo para escribir libremente en la base de datos. La OpenAI Responses API solo puede solicitar herramientas tipadas:
+Asistente H utiliza una sola cuenta de Gemini para toda la plataforma. `GEMINI_API_KEY` y `GEMINI_MODEL` son secretos globales administrados únicamente por la plataforma; los clientes no conectan cuentas de IA ni pueden ver la llave. El consumo continúa registrándose por organización para aplicar los límites de cada plan.
+
+El asistente no tiene acceso directo para escribir libremente en la base de datos. Gemini solo puede solicitar herramientas tipadas:
 
 - `list_services`
 - `find_availability`

@@ -31,6 +31,14 @@
 - [ ] Completar Embedded Signup y guardar un token por negocio en Secret Manager.
 - [ ] Dar a la cuenta de servicio únicamente permisos de lectura/escritura sobre los secretos de Asistente H.
 
+## Gemini central
+
+- [ ] Crear una sola llave de Gemini para Asistente H y guardarla como secreto global del servidor.
+- [ ] Configurar el modelo estable y los límites de gasto de la cuenta central.
+- [ ] Probar respuestas con información diferente en al menos dos organizaciones.
+- [ ] Confirmar que cada negocio consume únicamente la cuota mensual de su propio plan.
+- [ ] Verificar que ningún cliente puede consultar, sustituir ni exportar la llave global.
+
 ## Seguridad y privacidad
 
 - [ ] Publicar aviso de privacidad y mecanismo de consentimiento.

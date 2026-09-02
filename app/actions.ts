@@ -631,9 +631,6 @@ export async function createOrganization(input: {
         `INSERT INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, ?, ?, 'owner', 'active', ?)`,
       ).bind(`membership_${crypto.randomUUID()}`, id, user.userId, now),
       env.DB.prepare(
-        `INSERT INTO integration_connections (id, clinic_id, provider, status, created_at, updated_at) VALUES (?, ?, 'openai', 'pending', ?, ?)`,
-      ).bind(`integration_${crypto.randomUUID()}`, id, now, now),
-      env.DB.prepare(
         `INSERT INTO integration_connections (id, clinic_id, provider, status, created_at, updated_at) VALUES (?, ?, 'whatsapp', 'pending', ?, ?)`,
       ).bind(`integration_${crypto.randomUUID()}`, id, now, now),
       env.DB.prepare(
@@ -997,9 +994,8 @@ export async function revokeInvitation(
 
 export async function saveIntegrationMetadata(input: {
   clinicId: string;
-  provider: 'whatsapp' | 'openai' | 'gemini' | 'google_calendar';
+  provider: 'google_calendar';
   externalAccountId?: string;
-  phoneNumberId?: string;
 }): Promise<ActionResult> {
   return actionResult(async () => {
     const access = await requireClinicAccess(input.clinicId, [
@@ -1007,10 +1003,7 @@ export async function saveIntegrationMetadata(input: {
       'admin',
     ]);
     const now = new Date().toISOString();
-    const configured =
-      input.provider === 'whatsapp'
-        ? Boolean(input.phoneNumberId?.trim())
-        : Boolean(input.externalAccountId?.trim());
+    const configured = Boolean(input.externalAccountId?.trim());
     await env.DB.prepare(
       `INSERT INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?) ON CONFLICT(clinic_id, provider) DO UPDATE SET status = excluded.status, external_account_id = excluded.external_account_id, phone_number_id = excluded.phone_number_id, updated_at = excluded.updated_at`,
     )
@@ -1020,7 +1013,7 @@ export async function saveIntegrationMetadata(input: {
         input.provider,
         configured ? 'metadata_ready' : 'pending',
         input.externalAccountId?.trim() || null,
-        input.phoneNumberId?.trim() || null,
+        null,
         now,
         now,
       )

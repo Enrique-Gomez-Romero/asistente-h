@@ -173,7 +173,7 @@ export type DashboardData = {
   conversations: ConversationRecord[];
   faqs: FaqRecord[];
   integration: {
-    openAiConfigured: boolean;
+    aiConfigured: boolean;
     whatsappConfigured: boolean;
     googleCalendarConfigured: boolean;
     metaEmbeddedSignup: {
@@ -357,9 +357,7 @@ export async function getDashboardData(
     })),
     faqs: faqs.results,
     integration: {
-      openAiConfigured: saas.integrations.some(
-        (item) => item.provider === 'openai' && item.status === 'connected',
-      ),
+      aiConfigured: Boolean(process.env.GEMINI_API_KEY),
       whatsappConfigured: saas.integrations.some(
         (item) => item.provider === 'whatsapp' && item.status === 'connected',
       ),
@@ -381,10 +379,7 @@ export async function getDashboardData(
       invitationEmailReady: Boolean(
         process.env.RESEND_API_KEY && process.env.EMAIL_FROM,
       ),
-      mode:
-        process.env.OPENAI_API_KEY && process.env.WHATSAPP_ACCESS_TOKEN
-          ? 'production'
-          : 'demo',
+      mode: process.env.GEMINI_API_KEY ? 'production' : 'demo',
     },
     commercial: {
       automationRules: automationRules.results,

@@ -291,13 +291,11 @@ export async function getSaasContext(
   const integrationList = integrations.results.map((connection) => ({
     ...connection,
     status:
-      connection.provider === 'openai' && process.env.OPENAI_API_KEY
+      connection.provider === 'whatsapp' &&
+      process.env.WHATSAPP_ACCESS_TOKEN &&
+      process.env.WHATSAPP_PHONE_NUMBER_ID
         ? 'connected'
-        : connection.provider === 'whatsapp' &&
-            process.env.WHATSAPP_ACCESS_TOKEN &&
-            process.env.WHATSAPP_PHONE_NUMBER_ID
-          ? 'connected'
-          : connection.status,
+        : connection.status,
   }));
 
   return {
@@ -380,6 +378,7 @@ export async function requireClinicAccess(
 export type PlatformAdminData = {
   user: ChatGPTUser;
   infrastructure: {
+    gemini: boolean;
     invitationEmail: boolean;
     metaEmbeddedSignup: boolean;
     googleSecretManager: boolean;
@@ -455,6 +454,7 @@ export async function getPlatformAdminData(
   return {
     user,
     infrastructure: {
+      gemini: Boolean(process.env.GEMINI_API_KEY),
       invitationEmail: Boolean(
         process.env.RESEND_API_KEY && process.env.EMAIL_FROM,
       ),

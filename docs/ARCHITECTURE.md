@@ -58,7 +58,7 @@ Membresía + rol ──► Organización activa ──► Datos operativos
 - `app/api/export`: exportaciones CSV e iCalendar autorizadas por organización.
 - `app/actions.ts`: mutaciones autorizadas desde el panel.
 - `app/commercial-actions.ts`: cobranza manual y automatización comercial.
-- `lib/assistant.ts`: orquestación OpenAI y fallback local.
+- `lib/assistant.ts`: orquestación de la cuenta central de Gemini y fallback local.
 - `lib/automations.ts`: cola, plantillas, reintentos y envíos programados.
 - `lib/whatsapp.ts`: envío resuelto por organización y número de Meta.
 - `lib/google-secrets.ts`: acceso firmado a Google Secret Manager con cuenta de servicio.
@@ -76,7 +76,7 @@ La evolución recomendada es:
 
 - Cloud Run para el contenedor web y los webhooks.
 - Cloud SQL PostgreSQL para datos transaccionales.
-- Secret Manager para tokens de Meta y OpenAI.
+- Secret Manager para tokens individuales de Meta; la llave central de Gemini se configura como secreto global del servicio.
 - Cloud Tasks para trabajos asíncronos.
 - Cloud Scheduler para buscar recordatorios pendientes.
 - Cloud Logging y Error Reporting para observabilidad.

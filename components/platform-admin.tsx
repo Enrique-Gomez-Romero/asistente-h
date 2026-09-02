@@ -328,6 +328,10 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
               </CardHeader>
               <CardContent className="space-y-3">
                 <InfrastructureRow
+                  label="Gemini central"
+                  ready={data.infrastructure.gemini}
+                />
+                <InfrastructureRow
                   label="Correo de invitaciones"
                   ready={data.infrastructure.invitationEmail}
                 />

@@ -524,11 +524,6 @@ async function seedSaasData(d1: typeof env.DB): Promise<void> {
         .bind(now, periodEnd, periodEnd, now),
       d1
         .prepare(
-          `INSERT OR IGNORE INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES ('integration_demo_openai', 'clinic_demo', 'openai', 'pending', NULL, NULL, NULL, ?, ?)`,
-        )
-        .bind(now, now),
-      d1
-        .prepare(
           `INSERT OR IGNORE INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES ('integration_demo_whatsapp', 'clinic_demo', 'whatsapp', 'pending', NULL, NULL, NULL, ?, ?)`,
         )
         .bind(now, now),

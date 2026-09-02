@@ -6,13 +6,12 @@ import { recordUsage } from '@/lib/saas';
 
 type AssistantResult = {
   reply: string;
-  mode: 'openai' | 'demo';
+  mode: 'gemini' | 'demo';
   toolsUsed: string[];
 };
 
-const tools = [
+const functionDeclarations = [
   {
-    type: 'function',
     name: 'list_services',
     description:
       'Consulta el catálogo autorizado de servicios, precios y duración de la clínica.',
@@ -22,10 +21,8 @@ const tools = [
       required: [],
       additionalProperties: false,
     },
-    strict: true,
   },
   {
-    type: 'function',
     name: 'find_availability',
     description:
       'Consulta horarios libres reales para una fecha. No crea ni confirma una cita.',
@@ -34,17 +31,16 @@ const tools = [
       properties: {
         date: { type: 'string', description: 'Fecha en formato YYYY-MM-DD.' },
         doctor_id: {
-          type: ['string', 'null'],
-          description: 'ID del doctor o null si cualquiera es válido.',
+          type: 'string',
+          description:
+            'ID del profesional. Omite este campo si cualquiera es válido.',
         },
       },
-      required: ['date', 'doctor_id'],
+      required: ['date'],
       additionalProperties: false,
     },
-    strict: true,
   },
   {
-    type: 'function',
     name: 'get_clinic_information',
     description: 'Devuelve ubicación, horario y medios de pago autorizados.',
     parameters: {
@@ -53,10 +49,8 @@ const tools = [
       required: [],
       additionalProperties: false,
     },
-    strict: true,
   },
   {
-    type: 'function',
     name: 'request_human_help',
     description:
       'Solicita que recepción tome la conversación cuando el paciente lo pide o la situación requiere juicio humano.',
@@ -66,7 +60,6 @@ const tools = [
       required: ['reason'],
       additionalProperties: false,
     },
-    strict: true,
   },
 ] as const;
 
@@ -84,13 +77,13 @@ export async function generateAssistantReply(
     };
   }
   let result: AssistantResult;
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.GEMINI_API_KEY) {
     result = await generateDemoReply(message, clinicId);
   } else {
     try {
-      result = await generateOpenAiReply(message, clinicId);
+      result = await generateGeminiReply(message, clinicId);
     } catch (error) {
-      console.error('OpenAI assistant failed, using safe demo fallback', error);
+      console.error('Gemini assistant failed, using safe demo fallback', error);
       result = await generateDemoReply(message, clinicId);
     }
   }
@@ -98,76 +91,88 @@ export async function generateAssistantReply(
   return result;
 }
 
-async function generateOpenAiReply(
+async function generateGeminiReply(
   message: string,
   clinicId: string,
 ): Promise<AssistantResult> {
   const clinic = await getClinicInformation(clinicId);
   if (!clinic) return generateDemoReply(message, clinicId);
-  let response = await callOpenAi({
-    model: process.env.OPENAI_MODEL ?? 'gpt-5.6-luna',
-    instructions: `Eres el asistente virtual de ${clinic.name}. Responde en español mexicano, con calidez y brevedad. Identifícate como asistente virtual cuando sea natural. Usa exclusivamente las herramientas para precios, servicios y disponibilidad; nunca inventes datos ni confirmes una cita sin que el sistema la haya creado. No diagnostiques ni indiques medicamentos. Ante sangrado severo, dificultad para respirar, trauma importante o dolor insoportable, recomienda atención de emergencia inmediata y solicita apoyo humano. Si falta información, pregunta solo lo indispensable. Fecha actual: ${new Intl.DateTimeFormat('en-CA', { timeZone: clinic.timezone }).format(new Date())}, zona horaria ${clinic.timezone}.`,
-    input: message,
-    tools,
-    tool_choice: 'auto',
-    store: false,
-  });
+  const systemInstruction = `Eres el asistente virtual de ${clinic.name}. Responde en español mexicano, con calidez y brevedad. Identifícate como asistente virtual cuando sea natural. Usa exclusivamente las herramientas para precios, servicios y disponibilidad; nunca inventes datos ni confirmes una cita sin que el sistema la haya creado. No diagnostiques ni indiques medicamentos. Ante sangrado severo, dificultad para respirar, trauma importante o dolor insoportable, recomienda atención de emergencia inmediata y solicita apoyo humano. Si falta información, pregunta solo lo indispensable. Fecha actual: ${new Intl.DateTimeFormat('en-CA', { timeZone: clinic.timezone }).format(new Date())}, zona horaria ${clinic.timezone}.`;
+  const contents: GeminiContent[] = [
+    { role: 'user', parts: [{ text: message }] },
+  ];
   const toolsUsed: string[] = [];
 
   for (let iteration = 0; iteration < 3; iteration += 1) {
-    const calls = (response.output ?? []).filter(
-      (item: OpenAiOutput) => item.type === 'function_call',
+    const response = await callGemini({
+      systemInstruction: { parts: [{ text: systemInstruction }] },
+      contents,
+      tools: [{ functionDeclarations }],
+      toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+      generationConfig: { temperature: 0.25, maxOutputTokens: 700 },
+    });
+    const modelContent = response.candidates?.[0]?.content;
+    const calls = (modelContent?.parts ?? []).filter(
+      (part): part is GeminiPart & { functionCall: GeminiFunctionCall } =>
+        Boolean(part.functionCall?.name),
     );
     if (!calls.length) {
       return {
         reply:
-          extractOutputText(response) ||
+          extractGeminiText(modelContent) ||
           'Puedo ayudarte a consultar servicios, costos y horarios disponibles.',
-        mode: 'openai',
+        mode: 'gemini',
         toolsUsed,
       };
     }
-    const outputs = [];
+    if (!modelContent)
+      throw new Error('Gemini no devolvió contenido utilizable.');
+    contents.push(modelContent);
+    const outputs: GeminiPart[] = [];
     for (const call of calls) {
-      toolsUsed.push(call.name ?? 'unknown');
-      const args = safeJson(call.arguments);
-      const result = await executeTool(call.name ?? '', args, clinicId);
+      const name = call.functionCall.name;
+      toolsUsed.push(name);
+      const result = await executeTool(
+        name,
+        call.functionCall.args ?? {},
+        clinicId,
+      );
       outputs.push({
-        type: 'function_call_output',
-        call_id: call.call_id,
-        output: JSON.stringify(result),
+        functionResponse: {
+          name,
+          ...(call.functionCall.id ? { id: call.functionCall.id } : {}),
+          response: { result },
+        },
       });
     }
-    response = await callOpenAi({
-      model: process.env.OPENAI_MODEL ?? 'gpt-5.6-luna',
-      previous_response_id: response.id,
-      input: outputs,
-      tools,
-      store: false,
-    });
+    contents.push({ role: 'user', parts: outputs });
   }
   return {
-    reply:
-      extractOutputText(response) ||
-      'Voy a pedir a recepción que continúe contigo.',
-    mode: 'openai',
+    reply: 'Voy a pedir a recepción que continúe contigo.',
+    mode: 'gemini',
     toolsUsed,
   };
 }
 
-async function callOpenAi(
+async function callGemini(
   body: Record<string, unknown>,
-): Promise<OpenAiResponse> {
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
+): Promise<GeminiResponse> {
+  const model = process.env.GEMINI_MODEL ?? 'gemini-3.5-flash-lite';
+  if (!/^[A-Za-z0-9._-]+$/.test(model))
+    throw new Error('El modelo de Gemini configurado no es válido.');
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': process.env.GEMINI_API_KEY ?? '',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(`OpenAI returned ${response.status}`);
-  return response.json() as Promise<OpenAiResponse>;
+  );
+  if (!response.ok) throw new Error(`Gemini returned ${response.status}`);
+  return response.json() as Promise<GeminiResponse>;
 }
 
 async function executeTool(
@@ -290,35 +295,31 @@ async function generateDemoReply(
   };
 }
 
-type OpenAiOutput = {
-  type?: string;
-  name?: string;
-  call_id?: string;
-  arguments?: string;
-  content?: Array<{ type?: string; text?: string }>;
+type GeminiFunctionCall = {
+  id?: string;
+  name: string;
+  args?: Record<string, unknown>;
 };
-type OpenAiResponse = {
-  id: string;
-  output?: OpenAiOutput[];
-  output_text?: string;
+type GeminiPart = {
+  text?: string;
+  thoughtSignature?: string;
+  functionCall?: GeminiFunctionCall;
+  functionResponse?: {
+    id?: string;
+    name: string;
+    response: Record<string, unknown>;
+  };
+};
+type GeminiContent = { role: string; parts: GeminiPart[] };
+type GeminiResponse = {
+  candidates?: Array<{ content?: GeminiContent }>;
 };
 
-function extractOutputText(response: OpenAiResponse): string {
-  if (response.output_text) return response.output_text;
-  return (response.output ?? [])
-    .flatMap((item) => item.content ?? [])
-    .filter((part) => part.type === 'output_text')
+function extractGeminiText(content?: GeminiContent): string {
+  return (content?.parts ?? [])
     .map((part) => part.text ?? '')
     .join('\n')
     .trim();
-}
-
-function safeJson(value?: string): Record<string, unknown> {
-  try {
-    return value ? (JSON.parse(value) as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
 }
 
 function tomorrowInTimeZone(timeZone: string): string {
