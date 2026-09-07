@@ -205,6 +205,56 @@ export const saasUsers = sqliteTable(
   (table) => [uniqueIndex('idx_saas_users_email').on(table.email)],
 );
 
+export const authCredentials = sqliteTable('auth_credentials', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => saasUsers.id),
+  passwordHash: text('password_hash').notNull(),
+  passwordSalt: text('password_salt').notNull(),
+  passwordIterations: integer('password_iterations').notNull().default(210000),
+  failedAttempts: integer('failed_attempts').notNull().default(0),
+  lockedUntil: text('locked_until'),
+  passwordChangedAt: text('password_changed_at').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const authSessions = sqliteTable(
+  'auth_sessions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => saasUsers.id),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: text('expires_at').notNull(),
+    lastSeenAt: text('last_seen_at').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_auth_sessions_token_hash').on(table.tokenHash),
+    index('idx_auth_sessions_user_expires').on(table.userId, table.expiresAt),
+  ],
+);
+
+export const passwordResetTokens = sqliteTable(
+  'password_reset_tokens',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => saasUsers.id),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: text('expires_at').notNull(),
+    usedAt: text('used_at'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_password_reset_token_hash').on(table.tokenHash),
+    index('idx_password_reset_user_expires').on(table.userId, table.expiresAt),
+  ],
+);
+
 export const memberships = sqliteTable(
   'memberships',
   {

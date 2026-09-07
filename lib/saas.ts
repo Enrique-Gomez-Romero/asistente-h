@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 
-import { getChatGPTUser, type ChatGPTUser } from '@/app/chatgpt-auth';
+import { getAuthenticatedUser, type AppUser } from '@/lib/auth';
 import { ensureDatabase } from '@/db/initialize';
 import { googleSecretManagerConfigured } from '@/lib/google-secrets';
 
@@ -31,7 +31,7 @@ export type BusinessHour = {
 };
 
 export type SaasContext = {
-  user: ChatGPTUser;
+  user: AppUser;
   isPlatformAdmin: boolean;
   organizations: SaasOrganization[];
   activeOrganization: SaasOrganization | null;
@@ -94,19 +94,11 @@ export type SaasContext = {
   };
 };
 
-export async function getRequestUser(): Promise<ChatGPTUser | null> {
-  const user = await getChatGPTUser();
-  if (user) return user;
-  if (process.env.NODE_ENV !== 'development') return null;
-  return {
-    userId: 'local_developer',
-    email: 'desarrollo@dento-ai.local',
-    fullName: 'Equipo Asistente H',
-    displayName: 'Equipo Asistente H',
-  };
+export async function getRequestUser(): Promise<AppUser | null> {
+  return getAuthenticatedUser();
 }
 
-export async function ensureSaasUser(user: ChatGPTUser): Promise<void> {
+export async function ensureSaasUser(user: AppUser): Promise<void> {
   await ensureDatabase();
   const now = new Date().toISOString();
   await env.DB.prepare(
@@ -160,7 +152,7 @@ export async function ensureSaasUser(user: ChatGPTUser): Promise<void> {
 }
 
 export async function getSaasContext(
-  user: ChatGPTUser,
+  user: AppUser,
   requestedClinicId?: string,
 ): Promise<SaasContext> {
   await ensureSaasUser(user);
@@ -340,7 +332,7 @@ export async function requireClinicAccess(
   clinicId: string,
   allowedRoles: MembershipRole[] = ['owner', 'admin', 'staff', 'viewer'],
 ): Promise<{
-  user: ChatGPTUser;
+  user: AppUser;
   role: MembershipRole;
   isPlatformAdmin: boolean;
 }> {
@@ -389,7 +381,7 @@ export async function requireClinicAccess(
 }
 
 export type PlatformAdminData = {
-  user: ChatGPTUser;
+  user: AppUser;
   infrastructure: {
     gemini: boolean;
     invitationEmail: boolean;
@@ -440,7 +432,7 @@ export type PlatformAdminData = {
 };
 
 export async function getPlatformAdminData(
-  user: ChatGPTUser,
+  user: AppUser,
 ): Promise<PlatformAdminData> {
   await ensureSaasUser(user);
   const isAdmin = Boolean(

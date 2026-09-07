@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 
-import type { ChatGPTUser } from '@/app/chatgpt-auth';
+import type { AppUser } from '@/lib/auth';
 import { ensureDatabase } from '@/db/initialize';
 import { ensureSaasUser, type MembershipRole } from '@/lib/saas';
 
@@ -19,9 +19,56 @@ export async function hashInvitationToken(token: string) {
   ).join('');
 }
 
+export async function getInvitationDetails(token: string): Promise<
+  | {
+      ok: true;
+      email: string;
+      organizationName: string;
+      role: MembershipRole;
+      hasCredential: boolean;
+    }
+  | { ok: false; message: string }
+> {
+  await ensureDatabase();
+  if (token.length < 30)
+    return { ok: false, message: 'El enlace de invitación no es válido.' };
+  const invitation = await env.DB.prepare(
+    `SELECT i.email, i.role, i.status, i.expires_at AS expiresAt,
+            c.name AS organizationName,
+            CASE WHEN ac.user_id IS NULL THEN 0 ELSE 1 END AS hasCredential
+     FROM invitations i
+     JOIN clinics c ON c.id = i.clinic_id
+     LEFT JOIN saas_users u ON u.email = i.email
+     LEFT JOIN auth_credentials ac ON ac.user_id = u.id
+     WHERE i.token_hash = ? LIMIT 1`,
+  )
+    .bind(await hashInvitationToken(token))
+    .first<{
+      email: string;
+      role: MembershipRole;
+      status: string;
+      expiresAt: string;
+      organizationName: string;
+      hasCredential: number;
+    }>();
+  if (!invitation)
+    return { ok: false, message: 'La invitación no existe o fue reemplazada.' };
+  if (invitation.status !== 'pending')
+    return { ok: false, message: 'Esta invitación ya no está activa.' };
+  if (Date.parse(invitation.expiresAt) <= Date.now())
+    return { ok: false, message: 'La invitación venció. Solicita una nueva.' };
+  return {
+    ok: true,
+    email: invitation.email,
+    organizationName: invitation.organizationName,
+    role: invitation.role,
+    hasCredential: Boolean(invitation.hasCredential),
+  };
+}
+
 export async function acceptInvitationToken(
   token: string,
-  user: ChatGPTUser,
+  user: AppUser,
 ): Promise<
   | { ok: true; organizationId: string; organizationName: string }
   | { ok: false; message: string }

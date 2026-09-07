@@ -110,7 +110,7 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
             <Link href="/app">
               <Button variant="secondary">Ir al panel de cliente</Button>
             </Link>
-            <Link href="/signout-with-chatgpt?return_to=/">
+            <Link href="/logout">
               <Button
                 variant="ghost"
                 className="text-white hover:bg-white/10 hover:text-white"

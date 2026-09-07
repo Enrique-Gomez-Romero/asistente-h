@@ -8,14 +8,14 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
-import { chatGPTSignInPath, getChatGPTUser } from '@/app/chatgpt-auth';
+import { getAuthenticatedUser, loginPath } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
-  const user = await getChatGPTUser();
-  const destination = user ? '/app' : chatGPTSignInPath('/app');
+  const user = await getAuthenticatedUser();
+  const destination = user ? '/app' : loginPath('/app');
   return (
     <main className="min-h-screen overflow-hidden bg-[#f4f8f6] text-[#173b34]">
       <header className="mx-auto flex h-20 max-w-7xl items-center justify-between px-5 md:px-8">

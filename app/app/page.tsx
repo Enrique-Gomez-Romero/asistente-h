@@ -1,4 +1,4 @@
-import { requireChatGPTUser } from '@/app/chatgpt-auth';
+import { requireAuthenticatedUser } from '@/lib/auth';
 import { DentalDashboard } from '@/components/dental-dashboard';
 import { OrganizationOnboarding } from '@/components/organization-onboarding';
 import { getDashboardData } from '@/lib/dental-data';
@@ -11,7 +11,7 @@ export default async function CustomerApp({
 }: {
   searchParams: Promise<{ organization?: string }>;
 }) {
-  const user = await requireChatGPTUser('/app');
+  const user = await requireAuthenticatedUser('/app');
   const params = await searchParams;
   const saas = await getSaasContext(user, params.organization);
   if (!saas.activeOrganization)

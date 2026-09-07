@@ -162,7 +162,7 @@ async function generateGeminiReply(
 async function callGemini(
   body: Record<string, unknown>,
 ): Promise<GeminiResponse> {
-  const model = process.env.GEMINI_MODEL ?? 'gemini-3.5-flash-lite';
+  const model = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash-lite';
   if (!/^[A-Za-z0-9._-]+$/.test(model))
     throw new Error('El modelo de Gemini configurado no es válido.');
   const response = await fetch(

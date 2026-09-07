@@ -232,7 +232,7 @@ export function OrganizationOnboarding({
                 type="button"
                 variant="outline"
                 onClick={() =>
-                  window.location.assign('/signout-with-chatgpt?return_to=/')
+                  window.location.assign('/logout')
                 }
               >
                 <LogOut data-icon="inline-start" /> Cambiar de cuenta

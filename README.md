@@ -16,7 +16,7 @@ Base funcional multiempresa para vender recepción por WhatsApp e IA mediante su
 - Validación obligatoria de firma `x-hub-signature-256`; el webhook se desactiva si falta `META_APP_SECRET`.
 - Bitácora de cambios, indicadores y reglas de seguridad clínica.
 - Organizaciones ilimitadas a nivel plataforma y selector de negocio activo.
-- Inicio de sesión con ChatGPT, membresías y roles `owner`, `admin`, `staff` y `viewer`.
+- Inicio de sesión propio con correo y contraseña, recuperación de acceso, membresías y roles `owner`, `admin`, `staff` y `viewer`.
 - Aislamiento de consultas y mutaciones por organización.
 - Onboarding para consultorios dentales y otros tipos de negocio.
 - Planes, periodos de prueba, límites de usuarios, sedes, conversaciones y solicitudes de IA.
@@ -66,9 +66,13 @@ Para múltiples clientes se usa una sola aplicación de Meta de la plataforma co
 
 ## Acceso e invitaciones
 
-El sitio puede publicarse sin volver públicos los datos. La portada acepta visitantes anónimos, pero `/app`, `/platform`, exportaciones y acciones verifican identidad en el servidor. Un usuario nuevo no puede crear negocios ni convertirse en administrador. La administración crea la organización, invita al propietario y el enlace solo puede aceptarse con el correo destinatario.
+El sitio puede publicarse sin volver públicos los datos. La portada acepta visitantes anónimos, pero `/app`, `/platform`, exportaciones y acciones verifican una sesión propia en el servidor. Las contraseñas se derivan con PBKDF2 y sal individual; las sesiones usan cookies seguras y tokens que se almacenan únicamente como hash. Cinco intentos fallidos bloquean temporalmente la cuenta.
 
-Las invitaciones usan Resend mediante `RESEND_API_KEY` y un remitente verificado en `EMAIL_FROM`. El enlace vence en siete días; desde Configuración puede reenviarse o revocarse.
+Para la primera instalación, configura `AUTH_SETUP_TOKEN` con una cadena aleatoria de al menos 32 caracteres y abre `/configurar-acceso?token=VALOR`. Ese enlace crea una sola cuenta administradora y deja de funcionar en cuanto existe una credencial administrativa.
+
+Un usuario nuevo no puede crear negocios ni convertirse en administrador. La administración crea la organización, invita al usuario y el enlace solo puede aceptarse con el correo destinatario. Si todavía no existe una cuenta, el invitado define su nombre y contraseña desde el propio enlace.
+
+Las invitaciones y la recuperación de contraseña usan Resend mediante `RESEND_API_KEY` y un remitente verificado en `EMAIL_FROM`. Las invitaciones vencen en siete días y los enlaces de recuperación en 30 minutos. Desde Configuración, una invitación puede reenviarse o revocarse.
 
 ## Credenciales de Meta
 
