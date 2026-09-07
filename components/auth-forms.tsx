@@ -7,7 +7,6 @@ import { useActionState, useState } from 'react';
 import {
   bootstrapAdminAction,
   initialAuthState,
-  loginAction,
   registerInvitedUserAction,
   requestPasswordResetAction,
   resetPasswordAction,
@@ -17,12 +16,8 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 
 export function LoginForm({ next }: { next: string }) {
-  const [state, action, pending] = useActionState(
-    loginAction,
-    initialAuthState,
-  );
   return (
-    <form action={action}>
+    <form action="/api/auth/login" method="post">
       <input type="hidden" name="next" value={next} />
       <FieldGroup>
         <Field>
@@ -53,9 +48,8 @@ export function LoginForm({ next }: { next: string }) {
             required
           />
         </Field>
-        <AuthNotice state={state} />
-        <Button type="submit" size="lg" disabled={pending}>
-          {pending ? 'Verificando…' : 'Iniciar sesión'}
+        <Button type="submit" size="lg">
+          Iniciar sesión
         </Button>
       </FieldGroup>
     </form>

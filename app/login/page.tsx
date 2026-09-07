@@ -17,14 +17,14 @@ export const dynamic = 'force-dynamic';
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
   const user = await getAuthenticatedUser();
   if (user) {
     const context = await getSaasContext(user);
     redirect(context.isPlatformAdmin ? '/platform' : '/app');
   }
-  const { next } = await searchParams;
+  const { next, error } = await searchParams;
   return (
     <main className="grid min-h-screen place-items-center bg-[#f4f8f6] px-4 py-10">
       <Card className="w-full max-w-md border-0 shadow-[0_24px_70px_rgb(26_52_45/12%)]">
@@ -39,6 +39,11 @@ export default async function LoginPage({
         </CardHeader>
         <CardContent className="space-y-5">
           <LoginForm next={safeRelativePath(next ?? '/app')} />
+          {error === 'invalid_credentials' ? (
+            <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              El correo o la contraseña no son correctos.
+            </p>
+          ) : null}
           <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
             <LockKeyhole className="mt-0.5 size-4 shrink-0" />
             Después de verificar tu cuenta, el sistema muestra únicamente las

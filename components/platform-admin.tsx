@@ -107,9 +107,9 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <Link href="/app">
+            <a href="/app" target="_top">
               <Button variant="secondary">Ir al panel de cliente</Button>
-            </Link>
+            </a>
             <Link href="/logout">
               <Button
                 variant="ghost"

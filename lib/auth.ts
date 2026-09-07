@@ -22,7 +22,7 @@ type CredentialRow = {
   lockedUntil: string | null;
 };
 
-const SESSION_COOKIE = 'asistente_h_session';
+export const SESSION_COOKIE = 'asistente_h_session';
 const SESSION_DAYS = 14;
 // Cloudflare Workers currently caps Web Crypto PBKDF2 at 100,000 iterations.
 const PASSWORD_ITERATIONS = 100_000;
@@ -123,6 +123,13 @@ export async function createPasswordCredential(
 }
 
 export async function createSession(userId: string): Promise<void> {
+  const { token, expiresAt } = await issueSession(userId);
+  (await cookies()).set(SESSION_COOKIE, token, sessionCookieOptions(expiresAt));
+}
+
+export async function issueSession(
+  userId: string,
+): Promise<{ token: string; expiresAt: Date }> {
   await ensureDatabase();
   const token = randomToken();
   const now = new Date();
@@ -145,13 +152,17 @@ export async function createSession(userId: string): Promise<void> {
       now.toISOString(),
     ),
   ]);
-  (await cookies()).set(SESSION_COOKIE, token, {
+  return { token, expiresAt };
+}
+
+export function sessionCookieOptions(expiresAt: Date) {
+  return {
     httpOnly: true,
     secure: process.env.NODE_ENV !== 'development',
     sameSite: 'lax',
     path: '/',
     expires: expiresAt,
-  });
+  } as const;
 }
 
 export async function destroySession(): Promise<void> {
