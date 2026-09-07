@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useActionState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
+import { useActionState, useState } from 'react';
 
 import {
   bootstrapAdminAction,
@@ -44,11 +45,11 @@ export function LoginForm({ next }: { next: string }) {
               ¿La olvidaste?
             </Link>
           </div>
-          <Input
+          <PasswordInput
             id="login-password"
             name="password"
-            type="password"
             autoComplete="current-password"
+            label="contraseña"
             required
           />
         </Field>
@@ -178,13 +179,13 @@ function PasswordFields({ prefix }: { prefix: string }) {
     <>
       <Field>
         <FieldLabel htmlFor={`${prefix}-password`}>Contraseña</FieldLabel>
-        <Input
+        <PasswordInput
           id={`${prefix}-password`}
           name="password"
-          type="password"
           minLength={12}
           maxLength={128}
           autoComplete="new-password"
+          label="contraseña"
           required
         />
         <p className="text-xs text-muted-foreground">Mínimo 12 caracteres.</p>
@@ -193,17 +194,45 @@ function PasswordFields({ prefix }: { prefix: string }) {
         <FieldLabel htmlFor={`${prefix}-confirmation`}>
           Confirmar contraseña
         </FieldLabel>
-        <Input
+        <PasswordInput
           id={`${prefix}-confirmation`}
           name="passwordConfirmation"
-          type="password"
           minLength={12}
           maxLength={128}
           autoComplete="new-password"
+          label="confirmación de contraseña"
           required
         />
       </Field>
     </>
+  );
+}
+
+function PasswordInput({
+  label,
+  ...props
+}: Omit<React.ComponentProps<typeof Input>, 'type'> & { label: string }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        {...props}
+        type={visible ? 'text' : 'password'}
+        className="pr-11"
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+        aria-label={`${visible ? 'Ocultar' : 'Mostrar'} ${label}`}
+        aria-pressed={visible}
+        title={`${visible ? 'Ocultar' : 'Mostrar'} ${label}`}
+        onClick={() => setVisible((current) => !current)}
+      >
+        {visible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+      </Button>
+    </div>
   );
 }
 
