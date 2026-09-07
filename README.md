@@ -66,7 +66,7 @@ Para múltiples clientes se usa una sola aplicación de Meta de la plataforma co
 
 ## Acceso e invitaciones
 
-El sitio puede publicarse sin volver públicos los datos. La portada acepta visitantes anónimos, pero `/app`, `/platform`, exportaciones y acciones verifican una sesión propia en el servidor. Las contraseñas se derivan con PBKDF2 y sal individual; las sesiones usan cookies seguras y tokens que se almacenan únicamente como hash. Cinco intentos fallidos bloquean temporalmente la cuenta.
+El sitio puede publicarse sin volver públicos los datos. La portada acepta visitantes anónimos, pero `/app`, `/platform`, exportaciones y acciones verifican una sesión propia en el servidor. Las contraseñas se derivan con PBKDF2 y sal individual usando el máximo de 100 000 iteraciones admitido por el runtime; las sesiones usan cookies seguras y tokens que se almacenan únicamente como hash. Cinco intentos fallidos bloquean temporalmente la cuenta.
 
 Para la primera instalación, configura `AUTH_SETUP_TOKEN` con una cadena aleatoria de al menos 32 caracteres y abre `/configurar-acceso?token=VALOR`. Ese enlace crea una sola cuenta administradora y deja de funcionar en cuanto existe una credencial administrativa.
 

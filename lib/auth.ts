@@ -24,7 +24,8 @@ type CredentialRow = {
 
 const SESSION_COOKIE = 'asistente_h_session';
 const SESSION_DAYS = 14;
-const PASSWORD_ITERATIONS = 210_000;
+// Cloudflare Workers currently caps Web Crypto PBKDF2 at 100,000 iterations.
+const PASSWORD_ITERATIONS = 100_000;
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
 
