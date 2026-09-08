@@ -7,6 +7,7 @@ import { ensureDatabase } from '@/db/initialize';
 import { enqueueAppointmentAutomations } from '@/lib/automations';
 import { sendInvitationEmail } from '@/lib/email';
 import { syncAppointmentToGoogleCalendar } from '@/lib/google-calendar';
+import { deleteOrganizationSecret } from '@/lib/google-secrets';
 import { createInvitationToken, hashInvitationToken } from '@/lib/invitations';
 import { normalizePhone } from '@/lib/phone';
 import { appointmentEnd } from '@/lib/scheduling';
@@ -28,6 +29,7 @@ export type ActionResult = {
 
 type AppointmentInput = {
   clinicId: string;
+  locationId: string;
   patientName: string;
   phone: string;
   email?: string;
@@ -60,7 +62,7 @@ export async function createAppointment(
     const phone = normalizePhone(input.phone);
     if (patientName.length < 2 || !phone)
       throw new Error('Escribe el nombre y un teléfono válido.');
-    const [service, doctor, clinic] = await Promise.all([
+    const [service, doctor, clinic, location] = await Promise.all([
       env.DB.prepare(
         'SELECT id, duration_minutes AS durationMinutes FROM services WHERE id = ? AND clinic_id = ? AND active = 1',
       )
@@ -74,11 +76,34 @@ export async function createAppointment(
       env.DB.prepare('SELECT timezone FROM clinics WHERE id = ?')
         .bind(input.clinicId)
         .first<{ timezone: string }>(),
+      env.DB.prepare(
+        `SELECT l.id FROM locations l WHERE l.id = ? AND l.clinic_id = ? AND l.active = 1 AND (
+          ? IN ('owner', 'admin') OR ? = 1 OR EXISTS (
+            SELECT 1 FROM memberships m JOIN membership_locations ml ON ml.membership_id = m.id
+            WHERE m.clinic_id = l.clinic_id AND m.user_id = ? AND ml.location_id = l.id AND m.status = 'active'
+          )
+        )`,
+      )
+        .bind(
+          input.locationId,
+          input.clinicId,
+          access.role,
+          access.isPlatformAdmin ? 1 : 0,
+          access.user.userId,
+        )
+        .first<{ id: string }>(),
     ]);
-    if (!service || !doctor || !clinic)
+    if (!service || !doctor || !clinic || !location)
       throw new Error(
-        'El servicio o profesional seleccionado ya no está disponible.',
+        'La sucursal, el servicio o el profesional seleccionado ya no está disponible.',
       );
+    const doctorLocation = await env.DB.prepare(
+      `SELECT id FROM doctor_locations WHERE clinic_id = ? AND doctor_id = ? AND location_id = ? AND active = 1`,
+    )
+      .bind(input.clinicId, input.doctorId, input.locationId)
+      .first();
+    if (!doctorLocation)
+      throw new Error('Ese profesional no está asignado a la sucursal elegida.');
     const startsAt = parseLocalDate(input.startsAtLocal, clinic.timezone);
     if (!startsAt || Number.isNaN(startsAt.getTime()))
       throw new Error('Selecciona una fecha y hora válidas.');
@@ -126,8 +151,8 @@ export async function createAppointment(
     }
 
     const appointment = await env.DB.prepare(
-      `INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, 'pending', 'manual', ?, ?
+      `INSERT INTO appointments (id, clinic_id, location_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'manual', ?, ?
        WHERE NOT EXISTS (
          SELECT 1 FROM appointments
          WHERE clinic_id = ? AND doctor_id = ?
@@ -138,6 +163,7 @@ export async function createAppointment(
       .bind(
         appointmentId,
         input.clinicId,
+        input.locationId,
         patientId,
         input.doctorId,
         input.serviceId,
@@ -200,11 +226,12 @@ export async function setAppointmentStatus(
     )
       throw new Error('Estado no permitido.');
     const entity = await env.DB.prepare(
-      'SELECT clinic_id AS clinicId, patient_id AS patientId, starts_at AS startsAt FROM appointments WHERE id = ?',
+      'SELECT clinic_id AS clinicId, location_id AS locationId, patient_id AS patientId, starts_at AS startsAt FROM appointments WHERE id = ?',
     )
       .bind(id)
       .first<{
         clinicId: string;
+        locationId: string | null;
         patientId: string | null;
         startsAt: string;
       }>();
@@ -214,6 +241,7 @@ export async function setAppointmentStatus(
       'admin',
       'staff',
     ]);
+    await assertLocationAssignment(access, entity.clinicId, entity.locationId);
     const now = new Date().toISOString();
     const statements = [
       env.DB.prepare(
@@ -459,16 +487,17 @@ export async function toggleBotPaused(
 ): Promise<ActionResult> {
   return actionResult(async () => {
     const entity = await env.DB.prepare(
-      'SELECT clinic_id AS clinicId FROM conversations WHERE id = ?',
+      'SELECT clinic_id AS clinicId, location_id AS locationId FROM conversations WHERE id = ?',
     )
       .bind(conversationId)
-      .first<{ clinicId: string }>();
+      .first<{ clinicId: string; locationId: string | null }>();
     if (!entity) throw new Error('No se encontró la conversación.');
     const access = await requireClinicAccess(entity.clinicId, [
       'owner',
       'admin',
       'staff',
     ]);
+    await assertLocationAssignment(access, entity.clinicId, entity.locationId);
     await env.DB.prepare(
       'UPDATE conversations SET bot_paused = ?, assigned_to = ? WHERE id = ? AND clinic_id = ?',
     )
@@ -501,12 +530,13 @@ export async function markConversationRead(
   conversationId: string,
 ): Promise<void> {
   const entity = await env.DB.prepare(
-    'SELECT clinic_id AS clinicId FROM conversations WHERE id = ?',
+    'SELECT clinic_id AS clinicId, location_id AS locationId FROM conversations WHERE id = ?',
   )
     .bind(conversationId)
-    .first<{ clinicId: string }>();
+    .first<{ clinicId: string; locationId: string | null }>();
   if (!entity) return;
-  await requireClinicAccess(entity.clinicId, ['owner', 'admin', 'staff']);
+  const access = await requireClinicAccess(entity.clinicId, ['owner', 'admin', 'staff']);
+  await assertLocationAssignment(access, entity.clinicId, entity.locationId);
   await env.DB.prepare(
     'UPDATE conversations SET unread_count = 0 WHERE id = ? AND clinic_id = ?',
   )
@@ -523,16 +553,17 @@ export async function sendConversationMessage(
     const message = body.trim();
     if (!message) throw new Error('Escribe un mensaje.');
     const conversation = await env.DB.prepare(
-      `SELECT c.id, c.clinic_id AS clinicId, p.phone FROM conversations c LEFT JOIN patients p ON p.id = c.patient_id WHERE c.id = ?`,
+      `SELECT c.id, c.clinic_id AS clinicId, c.location_id AS locationId, p.phone FROM conversations c LEFT JOIN patients p ON p.id = c.patient_id WHERE c.id = ?`,
     )
       .bind(conversationId)
-      .first<{ id: string; clinicId: string; phone: string | null }>();
+      .first<{ id: string; clinicId: string; locationId: string | null; phone: string | null }>();
     if (!conversation) throw new Error('No se encontró la conversación.');
     const access = await requireClinicAccess(conversation.clinicId, [
       'owner',
       'admin',
       'staff',
     ]);
+    await assertLocationAssignment(access, conversation.clinicId, conversation.locationId);
     const now = new Date().toISOString();
     const messageId = `msg_${crypto.randomUUID()}`;
     await env.DB.batch([
@@ -548,6 +579,7 @@ export async function sendConversationMessage(
         conversation.clinicId,
         conversation.phone,
         message,
+        conversation.locationId,
       )
       : { sent: false, error: 'El paciente no tiene un teléfono registrado.' };
     await env.DB.prepare(
@@ -754,10 +786,20 @@ export async function createOrganization(input: {
     let invitationIdForEmail: string | undefined;
     let invitationTokenForEmail: string | undefined;
     if (ownerEmail === user.email) {
+      const ownerMembershipId = `membership_${crypto.randomUUID()}`;
       statements.push(
         env.DB.prepare(
           `INSERT INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, ?, ?, 'owner', 'active', ?)`,
-        ).bind(`membership_${crypto.randomUUID()}`, id, user.userId, now),
+        ).bind(ownerMembershipId, id, user.userId, now),
+        env.DB.prepare(
+          `INSERT INTO membership_locations (id, clinic_id, membership_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+        ).bind(
+          `membership_location_${crypto.randomUUID()}`,
+          id,
+          ownerMembershipId,
+          locationId,
+          now,
+        ),
       );
     } else {
       const invitationId = `invitation_${crypto.randomUUID()}`;
@@ -767,6 +809,13 @@ export async function createOrganization(input: {
         env.DB.prepare(
           `INSERT INTO invitations (id, clinic_id, email, role, status, token_hash, expires_at, created_at) VALUES (?, ?, ?, 'owner', 'pending', ?, ?, ?)`,
         ).bind(invitationId, id, ownerEmail, tokenHash, trialEnd, now),
+        env.DB.prepare(
+          `INSERT INTO invitation_locations (id, invitation_id, location_id) VALUES (?, ?, ?)`,
+        ).bind(
+          `invitation_location_${crypto.randomUUID()}`,
+          invitationId,
+          locationId,
+        ),
       );
       invitationPath = `/invite/${encodeURIComponent(token)}`;
       invitationIdForEmail = invitationId;
@@ -901,6 +950,7 @@ export async function inviteMember(input: {
   clinicId: string;
   email: string;
   role: MembershipRole;
+  locationIds?: string[];
 }): Promise<ActionResult> {
   return actionResult(async () => {
     const access = await requireClinicAccess(input.clinicId, [
@@ -926,6 +976,18 @@ export async function inviteMember(input: {
       }>();
     if (plan && plan.currentUsers + plan.pendingInvites >= plan.maxUsers)
       throw new Error('Alcanzaste el límite de usuarios de tu plan.');
+    const locationIds = [...new Set(input.locationIds ?? [])].filter(Boolean);
+    if (['staff', 'viewer'].includes(input.role) && !locationIds.length)
+      throw new Error('Selecciona al menos una sucursal para este usuario.');
+    if (locationIds.length) {
+      const validLocations = await env.DB.prepare(
+        `SELECT COUNT(*) AS total FROM locations WHERE clinic_id = ? AND active = 1 AND id IN (${locationIds.map(() => '?').join(',')})`,
+      )
+        .bind(input.clinicId, ...locationIds)
+        .first<{ total: number }>();
+      if (Number(validLocations?.total ?? 0) !== locationIds.length)
+        throw new Error('Una de las sucursales seleccionadas no es válida.');
+    }
     const [existingMembership, clinic] = await Promise.all([
       env.DB.prepare(
         `SELECT m.id FROM memberships m JOIN saas_users u ON u.id = m.user_id WHERE m.clinic_id = ? AND u.email = ? AND m.status = 'active'`,
@@ -961,6 +1023,17 @@ export async function inviteMember(input: {
         now,
       ),
     ];
+    for (const locationId of locationIds) {
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO invitation_locations (id, invitation_id, location_id) VALUES (?, ?, ?)`,
+        ).bind(
+          `invitation_location_${crypto.randomUUID()}`,
+          invitationId,
+          locationId,
+        ),
+      );
+    }
     await env.DB.batch(statements);
     const delivery = await sendInvitationEmail({
       invitationId,
@@ -986,6 +1059,64 @@ export async function inviteMember(input: {
         : `Invitación creada, pero el correo quedó pendiente. ${delivery.error}`,
       invitationPath: `/invite/${encodeURIComponent(token)}`,
     };
+  });
+}
+
+export async function updateMemberLocations(input: {
+  clinicId: string;
+  membershipId: string;
+  locationIds: string[];
+}): Promise<ActionResult> {
+  return actionResult(async () => {
+    const access = await requireClinicAccess(input.clinicId, ['owner', 'admin']);
+    const membership = await env.DB.prepare(
+      `SELECT id, role FROM memberships WHERE id = ? AND clinic_id = ? AND status = 'active'`,
+    )
+      .bind(input.membershipId, input.clinicId)
+      .first<{ id: string; role: MembershipRole }>();
+    if (!membership) throw new Error('No se encontró ese integrante.');
+    const locationIds = [...new Set(input.locationIds)].filter(Boolean);
+    if (['staff', 'viewer'].includes(membership.role) && !locationIds.length)
+      throw new Error('El personal debe tener al menos una sucursal asignada.');
+    if (locationIds.length) {
+      const valid = await env.DB.prepare(
+        `SELECT COUNT(*) AS total FROM locations WHERE clinic_id = ? AND active = 1 AND id IN (${locationIds.map(() => '?').join(',')})`,
+      )
+        .bind(input.clinicId, ...locationIds)
+        .first<{ total: number }>();
+      if (Number(valid?.total ?? 0) !== locationIds.length)
+        throw new Error('Una de las sucursales seleccionadas no es válida.');
+    }
+    const statements = [
+      env.DB.prepare(
+        `DELETE FROM membership_locations WHERE membership_id = ? AND clinic_id = ?`,
+      ).bind(input.membershipId, input.clinicId),
+    ];
+    const now = new Date().toISOString();
+    for (const locationId of locationIds) {
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO membership_locations (id, clinic_id, membership_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+        ).bind(
+          `membership_location_${crypto.randomUUID()}`,
+          input.clinicId,
+          input.membershipId,
+          locationId,
+          now,
+        ),
+      );
+    }
+    await env.DB.batch(statements);
+    await logAudit(
+      input.clinicId,
+      access.user.email,
+      'assign_locations',
+      'membership',
+      input.membershipId,
+      { locationIds },
+    );
+    revalidatePath('/app');
+    return { ok: true, message: 'Sucursales del usuario actualizadas.' };
   });
 }
 
@@ -1077,6 +1208,8 @@ export async function saveIntegrationMetadata(input: {
   clinicId: string;
   provider: 'google_calendar';
   externalAccountId?: string;
+  locationId?: string;
+  label?: string;
 }): Promise<ActionResult> {
   return actionResult(async () => {
     const access = await requireClinicAccess(input.clinicId, [
@@ -1086,12 +1219,14 @@ export async function saveIntegrationMetadata(input: {
     const now = new Date().toISOString();
     const configured = Boolean(input.externalAccountId?.trim());
     await env.DB.prepare(
-      `INSERT INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?) ON CONFLICT(clinic_id, provider) DO UPDATE SET status = excluded.status, external_account_id = excluded.external_account_id, phone_number_id = excluded.phone_number_id, updated_at = excluded.updated_at`,
+      `INSERT INTO integration_connections (id, clinic_id, location_id, provider, label, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
     )
       .bind(
         `integration_${crypto.randomUUID()}`,
         input.clinicId,
+        input.locationId?.trim() || null,
         input.provider,
+        input.label?.trim() || 'Google Calendar',
         configured ? 'metadata_ready' : 'pending',
         input.externalAccountId?.trim() || null,
         null,
@@ -1113,6 +1248,39 @@ export async function saveIntegrationMetadata(input: {
       message:
         'Datos de integración guardados. Las llaves secretas se conectan desde el servidor.',
     };
+  });
+}
+
+export async function disconnectGoogleCalendar(
+  clinicId: string,
+  connectionId: string,
+): Promise<ActionResult> {
+  return actionResult(async () => {
+    const access = await requireClinicAccess(clinicId, ['owner', 'admin']);
+    const connection = await env.DB.prepare(
+      `SELECT secret_reference AS secretReference FROM integration_connections WHERE id = ? AND clinic_id = ? AND provider = 'google_calendar'`,
+    )
+      .bind(connectionId, clinicId)
+      .first<{ secretReference: string | null }>();
+    if (!connection) throw new Error('No se encontró esa conexión de Google.');
+    if (connection.secretReference)
+      await deleteOrganizationSecret(connection.secretReference);
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `UPDATE integration_connections SET status = 'disconnected', secret_reference = NULL, updated_at = ? WHERE id = ? AND clinic_id = ?`,
+    )
+      .bind(now, connectionId, clinicId)
+      .run();
+    await logAudit(
+      clinicId,
+      access.user.email,
+      'disconnect',
+      'integration',
+      connectionId,
+      { provider: 'google_calendar' },
+    );
+    revalidatePath('/app');
+    return { ok: true, message: 'Google Calendar quedó desconectado.' };
   });
 }
 
@@ -1219,6 +1387,27 @@ async function logAudit(
     entityId,
     details,
   ).run();
+}
+
+async function assertLocationAssignment(
+  access: {
+    user: { userId: string };
+    role: MembershipRole;
+    isPlatformAdmin: boolean;
+  },
+  clinicId: string,
+  locationId: string | null,
+) {
+  if (access.isPlatformAdmin || ['owner', 'admin'].includes(access.role)) return;
+  if (!locationId)
+    throw new Error('Esta información todavía no tiene una sucursal asignada.');
+  const assignment = await env.DB.prepare(
+    `SELECT ml.id FROM memberships m JOIN membership_locations ml ON ml.membership_id = m.id WHERE m.clinic_id = ? AND m.user_id = ? AND m.status = 'active' AND ml.location_id = ? LIMIT 1`,
+  )
+    .bind(clinicId, access.user.userId, locationId)
+    .first();
+  if (!assignment)
+    throw new Error('No tienes acceso a la sucursal de este registro.');
 }
 
 function auditStatement(

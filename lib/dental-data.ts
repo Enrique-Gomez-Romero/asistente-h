@@ -20,6 +20,7 @@ export type DoctorRecord = {
   specialty: string | null;
   color: string;
   active: number;
+  locationIds: string[];
 };
 
 export type ServiceRecord = {
@@ -50,6 +51,8 @@ export type AppointmentRecord = {
   patientId: string | null;
   patientName: string;
   patientPhone: string | null;
+  locationId: string | null;
+  locationName: string | null;
   doctorId: string;
   doctorName: string;
   doctorColor: string;
@@ -78,6 +81,8 @@ export type ConversationRecord = {
   patientId: string | null;
   patientName: string;
   patientPhone: string | null;
+  locationId: string | null;
+  locationName: string | null;
   status: string;
   assignedTo: string | null;
   botPaused: number;
@@ -239,10 +244,10 @@ export async function getDashboardData(
       .first<ClinicRecord>(),
     d1
       .prepare(
-        'SELECT id, name, email, specialty, color, active FROM doctors WHERE clinic_id = ? ORDER BY name',
+        `SELECT d.id, d.name, d.email, d.specialty, d.color, d.active, COALESCE(GROUP_CONCAT(dl.location_id), '') AS locationIdsCsv FROM doctors d LEFT JOIN doctor_locations dl ON dl.doctor_id = d.id AND dl.active = 1 WHERE d.clinic_id = ? GROUP BY d.id ORDER BY d.name`,
       )
       .bind(clinicId)
-      .all<DoctorRecord>(),
+      .all<DoctorRecord & { locationIdsCsv: string }>(),
     d1
       .prepare(
         'SELECT id, name, category, description, duration_minutes AS durationMinutes, price_cents AS priceCents, active FROM services WHERE clinic_id = ? ORDER BY active DESC, name',
@@ -257,13 +262,13 @@ export async function getDashboardData(
       .all<PatientRecord>(),
     d1
       .prepare(
-        `SELECT a.id, a.patient_id AS patientId, COALESCE(p.full_name, 'Horario bloqueado') AS patientName, p.phone AS patientPhone, a.doctor_id AS doctorId, d.name AS doctorName, d.color AS doctorColor, a.service_id AS serviceId, COALESCE(s.name, 'Bloqueo de agenda') AS serviceName, a.starts_at AS startsAt, a.ends_at AS endsAt, a.status, a.source, a.notes FROM appointments a JOIN doctors d ON d.id = a.doctor_id LEFT JOIN patients p ON p.id = a.patient_id LEFT JOIN services s ON s.id = a.service_id WHERE a.clinic_id = ? ORDER BY a.starts_at`,
+        `SELECT a.id, a.patient_id AS patientId, COALESCE(p.full_name, 'Horario bloqueado') AS patientName, p.phone AS patientPhone, a.location_id AS locationId, l.name AS locationName, a.doctor_id AS doctorId, d.name AS doctorName, d.color AS doctorColor, a.service_id AS serviceId, COALESCE(s.name, 'Bloqueo de agenda') AS serviceName, a.starts_at AS startsAt, a.ends_at AS endsAt, a.status, a.source, a.notes FROM appointments a JOIN doctors d ON d.id = a.doctor_id LEFT JOIN locations l ON l.id = a.location_id LEFT JOIN patients p ON p.id = a.patient_id LEFT JOIN services s ON s.id = a.service_id WHERE a.clinic_id = ? ORDER BY a.starts_at`,
       )
       .bind(clinicId)
       .all<AppointmentRecord>(),
     d1
       .prepare(
-        `SELECT c.id, c.patient_id AS patientId, COALESCE(p.full_name, 'Paciente nuevo') AS patientName, p.phone AS patientPhone, c.status, c.assigned_to AS assignedTo, c.bot_paused AS botPaused, c.unread_count AS unreadCount, c.last_message_at AS lastMessageAt, COALESCE((SELECT body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), '') AS lastMessage FROM conversations c LEFT JOIN patients p ON p.id = c.patient_id WHERE c.clinic_id = ? ORDER BY c.last_message_at DESC`,
+        `SELECT c.id, c.patient_id AS patientId, COALESCE(p.full_name, 'Paciente nuevo') AS patientName, p.phone AS patientPhone, c.location_id AS locationId, l.name AS locationName, c.status, c.assigned_to AS assignedTo, c.bot_paused AS botPaused, c.unread_count AS unreadCount, c.last_message_at AS lastMessageAt, COALESCE((SELECT body FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), '') AS lastMessage FROM conversations c LEFT JOIN locations l ON l.id = c.location_id LEFT JOIN patients p ON p.id = c.patient_id WHERE c.clinic_id = ? ORDER BY c.last_message_at DESC`,
       )
       .bind(clinicId)
       .all<Omit<ConversationRecord, 'messages'>>(),
@@ -348,14 +353,45 @@ export async function getDashboardData(
     current.push(message);
     messagesByConversation.set(message.conversationId, current);
   }
+  const currentMember = saas.members.find(
+    (member) => member.userId === saas.user.userId,
+  );
+  const restrictLocations =
+    !saas.isPlatformAdmin &&
+    !['owner', 'admin'].includes(saas.activeOrganization?.role ?? '');
+  const allowedLocationIds = new Set(currentMember?.locationIds ?? []);
+  const visibleLocations = restrictLocations
+    ? locations.results.filter((location) => allowedLocationIds.has(location.id))
+    : locations.results;
+  const visibleAppointments = restrictLocations
+    ? appointments.results.filter(
+        (appointment) =>
+          appointment.locationId && allowedLocationIds.has(appointment.locationId),
+      )
+    : appointments.results;
+  const visibleConversations = restrictLocations
+    ? conversations.results.filter(
+        (conversation) =>
+          conversation.locationId && allowedLocationIds.has(conversation.locationId),
+      )
+    : conversations.results;
 
   return {
     clinic,
-    doctors: doctors.results,
+    doctors: doctors.results
+      .map(({ locationIdsCsv, ...doctor }) => ({
+        ...doctor,
+        locationIds: locationIdsCsv ? locationIdsCsv.split(',') : [],
+      }))
+      .filter(
+        (doctor) =>
+          !restrictLocations ||
+          doctor.locationIds.some((locationId) => allowedLocationIds.has(locationId)),
+      ),
     services: services.results,
     patients: patients.results,
-    appointments: appointments.results,
-    conversations: conversations.results.map((conversation) => ({
+    appointments: visibleAppointments,
+    conversations: visibleConversations.map((conversation) => ({
       ...conversation,
       messages: messagesByConversation.get(conversation.id) ?? [],
     })),
@@ -381,7 +417,7 @@ export async function getDashboardData(
         secretStorageReady: googleSecretManagerConfigured(),
       },
       invitationEmailReady: Boolean(
-        process.env.RESEND_API_KEY && process.env.EMAIL_FROM,
+        process.env.RESEND_API_KEY && process.env.EMAIL_FROM && process.env.PUBLIC_APP_URL,
       ),
       mode: process.env.GEMINI_API_KEY ? 'production' : 'demo',
     },
@@ -397,7 +433,7 @@ export async function getDashboardData(
       surveysAnswered: surveySummary?.answered ?? 0,
       averageScore: surveySummary?.averageScore ?? null,
     },
-    locations: locations.results,
+    locations: visibleLocations,
     saas,
   };
 }

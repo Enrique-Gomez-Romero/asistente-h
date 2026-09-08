@@ -83,6 +83,7 @@ export const appointments = sqliteTable(
     clinicId: text('clinic_id')
       .notNull()
       .references(() => clinics.id),
+    locationId: text('location_id'),
     patientId: text('patient_id').references(() => patients.id),
     doctorId: text('doctor_id')
       .notNull()
@@ -101,6 +102,11 @@ export const appointments = sqliteTable(
       table.clinicId,
       table.startsAt,
     ),
+    index('idx_appointments_clinic_location_starts').on(
+      table.clinicId,
+      table.locationId,
+      table.startsAt,
+    ),
     index('idx_appointments_doctor_starts_at').on(
       table.doctorId,
       table.startsAt,
@@ -116,6 +122,7 @@ export const conversations = sqliteTable(
     clinicId: text('clinic_id')
       .notNull()
       .references(() => clinics.id),
+    locationId: text('location_id'),
     patientId: text('patient_id').references(() => patients.id),
     channel: text('channel').notNull().default('whatsapp'),
     status: text('status').notNull().default('open'),
@@ -275,6 +282,31 @@ export const memberships = sqliteTable(
   ],
 );
 
+export const membershipLocations = sqliteTable(
+  'membership_locations',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id),
+    membershipId: text('membership_id')
+      .notNull()
+      .references(() => memberships.id),
+    locationId: text('location_id').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_membership_locations_unique').on(
+      table.membershipId,
+      table.locationId,
+    ),
+    index('idx_membership_locations_clinic_location').on(
+      table.clinicId,
+      table.locationId,
+    ),
+  ],
+);
+
 export const platformAdmins = sqliteTable('platform_admins', {
   userId: text('user_id')
     .primaryKey()
@@ -387,7 +419,9 @@ export const integrationConnections = sqliteTable(
     clinicId: text('clinic_id')
       .notNull()
       .references(() => clinics.id),
+    locationId: text('location_id').references(() => locations.id),
     provider: text('provider').notNull(),
+    label: text('label'),
     status: text('status').notNull().default('pending'),
     externalAccountId: text('external_account_id'),
     phoneNumberId: text('phone_number_id'),
@@ -396,8 +430,9 @@ export const integrationConnections = sqliteTable(
     updatedAt: text('updated_at').notNull(),
   },
   (table) => [
-    uniqueIndex('idx_integrations_clinic_provider').on(
-      table.clinicId,
+    index('idx_integrations_clinic_provider').on(table.clinicId, table.provider),
+    index('idx_integrations_location_provider').on(
+      table.locationId,
       table.provider,
     ),
     uniqueIndex('idx_integrations_phone_number_id').on(table.phoneNumberId),
@@ -445,6 +480,25 @@ export const invitations = sqliteTable(
   ],
 );
 
+export const invitationLocations = sqliteTable(
+  'invitation_locations',
+  {
+    id: text('id').primaryKey(),
+    invitationId: text('invitation_id')
+      .notNull()
+      .references(() => invitations.id),
+    locationId: text('location_id')
+      .notNull()
+      .references(() => locations.id),
+  },
+  (table) => [
+    uniqueIndex('idx_invitation_locations_unique').on(
+      table.invitationId,
+      table.locationId,
+    ),
+  ],
+);
+
 export const organizationStates = sqliteTable('organization_states', {
   clinicId: text('clinic_id')
     .primaryKey()
@@ -467,10 +521,12 @@ export const manualPayments = sqliteTable(
     periodStart: text('period_start').notNull(),
     periodEnd: text('period_end').notNull(),
     receivedAt: text('received_at').notNull(),
+    status: text('status').notNull().default('paid'),
     method: text('method').notNull().default('bank_transfer'),
     reference: text('reference'),
     invoiceFolio: text('invoice_folio'),
     invoiceUrl: text('invoice_url'),
+    receiptUrl: text('receipt_url'),
     notes: text('notes'),
     createdBy: text('created_by').notNull(),
     createdAt: text('created_at').notNull(),

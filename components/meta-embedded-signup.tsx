@@ -38,6 +38,9 @@ type SessionInfo = { wabaId: string; phoneNumberId: string };
 
 export function MetaEmbeddedSignup({
   clinicId,
+  locationId,
+  locationName,
+  connectionId,
   appId,
   configId,
   ready,
@@ -45,6 +48,9 @@ export function MetaEmbeddedSignup({
   phoneNumberId,
 }: {
   clinicId: string;
+  locationId: string;
+  locationName: string;
+  connectionId?: string;
   appId: string | null;
   configId: string | null;
   ready: boolean;
@@ -115,6 +121,8 @@ export function MetaEmbeddedSignup({
     startTransition(async () => {
       const result = await completeMetaEmbeddedSignup({
         clinicId,
+        locationId,
+        label: `WhatsApp · ${locationName}`,
         code: authorizationCode,
         wabaId: sessionInfo.wabaId,
         phoneNumberId: sessionInfo.phoneNumberId,
@@ -125,7 +133,7 @@ export function MetaEmbeddedSignup({
       setSessionInfo(null);
       if (result.ok) router.refresh();
     });
-  }, [authorizationCode, clinicId, router, sessionInfo]);
+  }, [authorizationCode, clinicId, locationId, locationName, router, sessionInfo]);
 
   function connect() {
     setNotice(null);
@@ -175,7 +183,7 @@ export function MetaEmbeddedSignup({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold">Conexión oficial de Meta</p>
+            <p className="text-sm font-semibold">WhatsApp · {locationName}</p>
             <Badge variant={connected ? 'default' : 'secondary'}>
               {connected ? 'Conectado' : ready ? 'Disponible' : 'Pendiente'}
             </Badge>
@@ -212,7 +220,7 @@ export function MetaEmbeddedSignup({
               type="button"
               variant="outline"
               disabled={pending}
-              onClick={() => run(() => testMetaConnection(clinicId))}
+              onClick={() => run(() => testMetaConnection(clinicId, connectionId!))}
             >
               <RefreshCw data-icon="inline-start" /> Probar conexión
             </Button>
@@ -220,7 +228,7 @@ export function MetaEmbeddedSignup({
               type="button"
               variant="destructive"
               disabled={pending}
-              onClick={() => run(() => disconnectMetaWhatsApp(clinicId))}
+              onClick={() => run(() => disconnectMetaWhatsApp(clinicId, connectionId!))}
             >
               <Unplug data-icon="inline-start" /> Desconectar
             </Button>

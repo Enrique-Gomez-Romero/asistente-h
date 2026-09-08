@@ -4,6 +4,7 @@ import { env } from 'cloudflare:workers';
 import { revalidatePath } from 'next/cache';
 
 import { ensureDatabase } from '@/db/initialize';
+import { sendSubscriptionEmail } from '@/lib/email';
 import { processDueAutomations } from '@/lib/automations';
 import { getRequestUser, requireClinicAccess } from '@/lib/saas';
 
@@ -77,6 +78,10 @@ export async function adminUpdateSubscription(input: {
         now,
       ),
     ]);
+    await notifySubscriptionOwner(input.clinicId, {
+      subject: 'Actualización de tu suscripción',
+      message: `Tu plan quedó con estado ${subscriptionStatusLabel(input.status)} y vigencia hasta ${periodEnd.toLocaleDateString('es-MX')}.`,
+    });
     refreshCommercialViews();
     return { ok: true, message: 'Plan, estado y vigencia actualizados.' };
   });
@@ -131,9 +136,11 @@ export async function adminRecordManualPayment(input: {
   periodStart: string;
   periodEnd: string;
   receivedAt: string;
+  status: 'pending' | 'paid' | 'overdue' | 'suspended';
   reference?: string;
   invoiceFolio?: string;
   invoiceUrl?: string;
+  receiptUrl?: string;
   notes?: string;
 }): Promise<CommercialActionResult> {
   return commercialAction(async () => {
@@ -151,7 +158,7 @@ export async function adminRecordManualPayment(input: {
     const now = new Date().toISOString();
     await env.DB.batch([
       env.DB.prepare(
-        `INSERT INTO manual_payments (id, clinic_id, amount_cents, currency, period_start, period_end, received_at, method, reference, invoice_folio, invoice_url, notes, created_by, created_at) VALUES (?, ?, ?, 'MXN', ?, ?, ?, 'bank_transfer', ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO manual_payments (id, clinic_id, amount_cents, currency, period_start, period_end, received_at, status, method, reference, invoice_folio, invoice_url, receipt_url, notes, created_by, created_at) VALUES (?, ?, ?, 'MXN', ?, ?, ?, ?, 'bank_transfer', ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         `payment_${crypto.randomUUID()}`,
         input.clinicId,
@@ -159,16 +166,26 @@ export async function adminRecordManualPayment(input: {
         start.toISOString(),
         end.toISOString(),
         received.toISOString(),
+        input.status,
         input.reference?.trim() || null,
         input.invoiceFolio?.trim() || null,
         input.invoiceUrl?.trim() || null,
+        input.receiptUrl?.trim() || null,
         input.notes?.trim() || null,
         user.email,
         now,
       ),
       env.DB.prepare(
-        `UPDATE subscriptions SET status = 'active', current_period_start = ?, current_period_end = ?, updated_at = ? WHERE clinic_id = ?`,
-      ).bind(start.toISOString(), end.toISOString(), now, input.clinicId),
+        `UPDATE subscriptions SET status = ?, current_period_start = CASE WHEN ? = 'paid' THEN ? ELSE current_period_start END, current_period_end = CASE WHEN ? = 'paid' THEN ? ELSE current_period_end END, updated_at = ? WHERE clinic_id = ?`,
+      ).bind(
+        input.status === 'paid' ? 'active' : input.status === 'pending' ? 'past_due' : 'past_due',
+        input.status,
+        start.toISOString(),
+        input.status,
+        end.toISOString(),
+        now,
+        input.clinicId,
+      ),
       env.DB.prepare(
         `INSERT INTO subscription_events (id, clinic_id, action, previous_value, next_value, actor, created_at) VALUES (?, ?, 'payment_recorded', NULL, ?, ?, ?)`,
       ).bind(
@@ -182,11 +199,90 @@ export async function adminRecordManualPayment(input: {
         now,
       ),
     ]);
+    if (input.status === 'suspended') {
+      await env.DB.prepare(
+        `INSERT INTO organization_states (clinic_id, status, suspended_at, suspension_reason, updated_at) VALUES (?, 'suspended', ?, 'Pago por transferencia pendiente', ?) ON CONFLICT(clinic_id) DO UPDATE SET status = 'suspended', suspended_at = excluded.suspended_at, suspension_reason = excluded.suspension_reason, updated_at = excluded.updated_at`,
+      )
+        .bind(input.clinicId, now, now)
+        .run();
+    }
+    await notifySubscriptionOwner(input.clinicId, {
+      subject: input.status === 'paid' ? 'Pago confirmado' : 'Estado de transferencia actualizado',
+      message:
+        input.status === 'paid'
+          ? `Confirmamos tu transferencia por $${input.amountPesos.toLocaleString('es-MX')} MXN. Tu servicio está vigente hasta ${end.toLocaleDateString('es-MX')}.`
+          : `Tu transferencia aparece como ${paymentStatusLabel(input.status)}. Si ya realizaste el pago, comparte la referencia con administración.`,
+    });
     refreshCommercialViews();
     return {
       ok: true,
-      message: 'Transferencia registrada y suscripción activada.',
+      message:
+        input.status === 'paid'
+          ? 'Transferencia registrada y suscripción activada.'
+          : 'Estado de transferencia registrado.',
     };
+  });
+}
+
+export async function adminUpdateManualPaymentStatus(input: {
+  paymentId: string;
+  status: 'pending' | 'paid' | 'overdue' | 'suspended';
+}): Promise<CommercialActionResult> {
+  return commercialAction(async () => {
+    const user = await requirePlatformAdmin();
+    const payment = await env.DB.prepare(
+      `SELECT clinic_id AS clinicId, amount_cents AS amountCents, period_start AS periodStart, period_end AS periodEnd FROM manual_payments WHERE id = ?`,
+    )
+      .bind(input.paymentId)
+      .first<{ clinicId: string; amountCents: number; periodStart: string; periodEnd: string }>();
+    if (!payment) throw new Error('No se encontró la transferencia.');
+    const now = new Date().toISOString();
+    const subscriptionStatus = input.status === 'paid' ? 'active' : 'past_due';
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE manual_payments SET status = ? WHERE id = ?`).bind(
+        input.status,
+        input.paymentId,
+      ),
+      env.DB.prepare(
+        `UPDATE subscriptions SET status = ?, current_period_start = CASE WHEN ? = 'paid' THEN ? ELSE current_period_start END, current_period_end = CASE WHEN ? = 'paid' THEN ? ELSE current_period_end END, updated_at = ? WHERE clinic_id = ?`,
+      ).bind(
+        subscriptionStatus,
+        input.status,
+        payment.periodStart,
+        input.status,
+        payment.periodEnd,
+        now,
+        payment.clinicId,
+      ),
+      env.DB.prepare(
+        `INSERT INTO subscription_events (id, clinic_id, action, previous_value, next_value, actor, created_at) VALUES (?, ?, 'payment_status_updated', NULL, ?, ?, ?)`,
+      ).bind(
+        `subscription_event_${crypto.randomUUID()}`,
+        payment.clinicId,
+        JSON.stringify({ paymentId: input.paymentId, status: input.status }),
+        user.email,
+        now,
+      ),
+    ]);
+    if (input.status === 'suspended') {
+      await env.DB.prepare(
+        `INSERT INTO organization_states (clinic_id, status, suspended_at, suspension_reason, updated_at) VALUES (?, 'suspended', ?, 'Pago vencido', ?) ON CONFLICT(clinic_id) DO UPDATE SET status = 'suspended', suspended_at = excluded.suspended_at, suspension_reason = excluded.suspension_reason, updated_at = excluded.updated_at`,
+      )
+        .bind(payment.clinicId, now, now)
+        .run();
+    } else if (input.status === 'paid') {
+      await env.DB.prepare(
+        `UPDATE organization_states SET status = 'active', suspended_at = NULL, suspension_reason = NULL, updated_at = ? WHERE clinic_id = ?`,
+      )
+        .bind(now, payment.clinicId)
+        .run();
+    }
+    await notifySubscriptionOwner(payment.clinicId, {
+      subject: 'Estado de transferencia actualizado',
+      message: `Tu transferencia ahora aparece como ${paymentStatusLabel(input.status)}.`,
+    });
+    refreshCommercialViews();
+    return { ok: true, message: 'Estado de transferencia actualizado.' };
   });
 }
 
@@ -543,6 +639,42 @@ async function commercialAction(
 function refreshCommercialViews() {
   revalidatePath('/app');
   revalidatePath('/platform');
+}
+
+async function notifySubscriptionOwner(
+  clinicId: string,
+  notice: { subject: string; message: string },
+) {
+  const owner = await env.DB.prepare(
+    `SELECT u.email, c.name AS organizationName FROM memberships m JOIN saas_users u ON u.id = m.user_id JOIN clinics c ON c.id = m.clinic_id WHERE m.clinic_id = ? AND m.role = 'owner' AND m.status = 'active' ORDER BY m.created_at LIMIT 1`,
+  )
+    .bind(clinicId)
+    .first<{ email: string; organizationName: string }>();
+  if (!owner) return;
+  await sendSubscriptionEmail({
+    recipient: owner.email,
+    organizationName: owner.organizationName,
+    subject: notice.subject,
+    message: notice.message,
+  });
+}
+
+function paymentStatusLabel(status: 'pending' | 'paid' | 'overdue' | 'suspended') {
+  return {
+    pending: 'pendiente',
+    paid: 'pagada',
+    overdue: 'vencida',
+    suspended: 'suspendida',
+  }[status];
+}
+
+function subscriptionStatusLabel(status: 'trialing' | 'active' | 'past_due' | 'canceled') {
+  return {
+    trialing: 'prueba',
+    active: 'activo',
+    past_due: 'pago pendiente',
+    canceled: 'cancelado',
+  }[status];
 }
 
 function patientEvent(

@@ -2,7 +2,10 @@ import { NextResponse } from 'next/server';
 
 import { processDueAutomations } from '@/lib/automations';
 import { logOperationalEvent } from '@/lib/observability';
-import { expirePastDueSubscriptions } from '@/lib/subscriptions';
+import {
+  expirePastDueSubscriptions,
+  sendUpcomingSubscriptionNotices,
+} from '@/lib/subscriptions';
 
 export async function POST(request: Request) {
   const secret = process.env.AUTOMATION_SECRET;
@@ -11,15 +14,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
-    const [expiredSubscriptions, result] = await Promise.all([
+    const [expiredSubscriptions, subscriptionNotices, result] = await Promise.all([
       expirePastDueSubscriptions(),
+      sendUpcomingSubscriptionNotices(),
       processDueAutomations(100),
     ]);
     logOperationalEvent('info', 'automations.completed', {
       expiredSubscriptions,
+      subscriptionNotices,
       ...result,
     });
-    return NextResponse.json({ ok: true, expiredSubscriptions, ...result });
+    return NextResponse.json({ ok: true, expiredSubscriptions, subscriptionNotices, ...result });
   } catch (error) {
     logOperationalEvent('error', 'automations.failed', { error });
     return NextResponse.json(

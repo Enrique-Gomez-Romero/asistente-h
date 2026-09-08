@@ -120,11 +120,12 @@ export async function acceptInvitationToken(
       message: 'El negocio alcanzó el límite de usuarios de su plan.',
     };
   const now = new Date().toISOString();
+  const proposedMembershipId = `membership_${crypto.randomUUID()}`;
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, ?, ?, ?, 'active', ?) ON CONFLICT(clinic_id, user_id) DO UPDATE SET role = excluded.role, status = 'active'`,
     ).bind(
-      `membership_${crypto.randomUUID()}`,
+      proposedMembershipId,
       invitation.clinicId,
       user.userId,
       invitation.role,
@@ -144,6 +145,31 @@ export async function acceptInvitationToken(
       now,
     ),
   ]);
+  const membership = await env.DB.prepare(
+    `SELECT id FROM memberships WHERE clinic_id = ? AND user_id = ? AND status = 'active'`,
+  )
+    .bind(invitation.clinicId, user.userId)
+    .first<{ id: string }>();
+  const assignedLocations = await env.DB.prepare(
+    `SELECT location_id AS locationId FROM invitation_locations WHERE invitation_id = ?`,
+  )
+    .bind(invitation.id)
+    .all<{ locationId: string }>();
+  if (membership && assignedLocations.results.length) {
+    await env.DB.batch(
+      assignedLocations.results.map(({ locationId }) =>
+        env.DB.prepare(
+          `INSERT OR IGNORE INTO membership_locations (id, clinic_id, membership_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+        ).bind(
+          `membership_location_${crypto.randomUUID()}`,
+          invitation.clinicId,
+          membership.id,
+          locationId,
+          now,
+        ),
+      ),
+    );
+  }
   return {
     ok: true,
     organizationId: invitation.clinicId,

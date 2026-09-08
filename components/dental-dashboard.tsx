@@ -39,6 +39,7 @@ import {
   createLocation,
   createProfessional,
   createService,
+  disconnectGoogleCalendar,
   inviteMember,
   markConversationRead,
   resendInvitation,
@@ -48,6 +49,7 @@ import {
   toggleBotPaused,
   toggleService,
   updateBusinessHours,
+  updateMemberLocations,
   updateOrganizationProfile,
   updatePatientConsent,
   type ActionResult,
@@ -114,6 +116,7 @@ type View =
   | 'automation'
   | 'analytics'
   | 'plan'
+  | 'integrations'
   | 'settings'
   | 'platform';
 
@@ -131,6 +134,7 @@ const navigation: Array<{
   { id: 'automation', label: 'Automatización', icon: Zap },
   { id: 'analytics', label: 'Analítica', icon: BarChart3 },
   { id: 'plan', label: 'Mi plan', icon: CreditCard },
+  { id: 'integrations', label: 'Conexiones', icon: Wifi },
   { id: 'settings', label: 'Configuración', icon: Settings2 },
   { id: 'platform', label: 'Plataforma', icon: Building2 },
 ];
@@ -149,6 +153,35 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
   const [appointmentOpen, setAppointmentOpen] = useState(false);
   const [serviceOpen, setServiceOpen] = useState(false);
   const [notice, setNotice] = useState<ActionResult | null>(null);
+  const currentMember = data.saas.members.find(
+    (member) => member.userId === data.saas.user.userId,
+  );
+  const canSeeAllLocations =
+    data.saas.isPlatformAdmin ||
+    ['owner', 'admin'].includes(data.saas.activeOrganization?.role ?? '');
+  const availableLocations = canSeeAllLocations
+    ? data.locations
+    : data.locations.filter((location) =>
+        currentMember?.locationIds.includes(location.id),
+      );
+  const [selectedLocationId, setSelectedLocationId] = useState(
+    canSeeAllLocations ? 'all' : availableLocations[0]?.id ?? 'all',
+  );
+  const scopedData =
+    selectedLocationId === 'all'
+      ? data
+      : {
+          ...data,
+          appointments: data.appointments.filter(
+            (item) => item.locationId === selectedLocationId,
+          ),
+          conversations: data.conversations.filter(
+            (item) => item.locationId === selectedLocationId,
+          ),
+          doctors: data.doctors.filter((item) =>
+            item.locationIds.includes(selectedLocationId),
+          ),
+        };
   const [isPending, startTransition] = useTransition();
   const unread = data.conversations.reduce(
     (total, item) => total + item.unreadCount,
@@ -298,6 +331,21 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
+            <NativeSelect
+              aria-label="Sucursal activa"
+              value={selectedLocationId}
+              onChange={(event) => setSelectedLocationId(event.target.value)}
+              className="max-w-[210px]"
+            >
+              {canSeeAllLocations ? (
+                <NativeSelectOption value="all">Todas las sucursales</NativeSelectOption>
+              ) : null}
+              {availableLocations.map((location) => (
+                <NativeSelectOption key={location.id} value={location.id}>
+                  {location.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
             <div className="ml-auto flex items-center gap-2">
               <Button variant="outline" size="icon" aria-label="Buscar">
                 <Search />
@@ -328,7 +376,7 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
           <div className="px-4 py-6 md:px-8 md:py-8">
             {view === 'agenda' ? (
               <AgendaView
-                data={data}
+                data={scopedData}
                 onOpenInbox={() => setView('inbox')}
                 runAction={runAction}
                 isPending={isPending || !canOperate}
@@ -336,7 +384,7 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
             ) : null}
             {view === 'inbox' ? (
               <InboxView
-                conversations={data.conversations}
+                conversations={scopedData.conversations}
                 runAction={runAction}
                 isPending={isPending || !canOperate}
               />
@@ -371,11 +419,18 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                 isPending={isPending}
               />
             ) : null}
-            {view === 'analytics' ? <AnalyticsView data={data} /> : null}
+            {view === 'analytics' ? <AnalyticsView data={scopedData} /> : null}
             {view === 'plan' ? <PlanView data={data} /> : null}
+            {view === 'integrations' ? (
+              <IntegrationsView
+                data={data}
+                runAction={runAction}
+                isPending={isPending}
+              />
+            ) : null}
             {view === 'automation' ? (
               <CommercialView
-                data={data}
+                data={scopedData}
                 runAction={runAction}
                 isPending={isPending || !canManage}
               />
@@ -399,6 +454,7 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
         open={appointmentOpen}
         setOpen={setAppointmentOpen}
         data={data}
+        selectedLocationId={selectedLocationId}
         runAction={runAction}
         isPending={isPending}
       />
@@ -2004,8 +2060,7 @@ function BranchesView({
                 <Input name="name" placeholder="Nombre del profesional" required />
                 <Input name="specialty" placeholder="Especialidad o función" />
                 <Input name="email" type="email" placeholder="Correo" />
-                <NativeSelect name="locationId" className="w-full">
-                  <NativeSelectOption value="">Sin sede fija</NativeSelectOption>
+                <NativeSelect name="locationId" className="w-full" required>
                   {data.locations.map((location) => (
                     <NativeSelectOption key={location.id} value={location.id}>
                       {location.name}
@@ -2045,6 +2100,7 @@ function TeamView({
         clinicId: data.clinic.id,
         email: formText(form, 'email'),
         role: formText(form, 'role') as 'owner' | 'admin' | 'staff' | 'viewer',
+        locationIds: form.getAll('locationIds').map(String),
       }),
     );
   }
@@ -2059,7 +2115,8 @@ function TeamView({
       <Card className="max-w-4xl border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
         <CardContent className="space-y-3 pt-6">
           {data.saas.members.map((member) => (
-            <div key={member.id} className="flex items-center gap-3 rounded-xl border p-4">
+            <div key={member.id} className="rounded-xl border p-4">
+              <div className="flex items-center gap-3">
               <div className="grid size-10 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
                 {initials(member.fullName ?? member.email)}
               </div>
@@ -2070,6 +2127,40 @@ function TeamView({
                 <p className="truncate text-xs text-muted-foreground">{member.email}</p>
               </div>
               <Badge variant="outline">{roleLabel(member.role)}</Badge>
+              </div>
+              <form
+                className="mt-3 flex flex-wrap items-center gap-3 border-t pt-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const form = new FormData(event.currentTarget);
+                  runAction(() =>
+                    updateMemberLocations({
+                      clinicId: data.clinic.id,
+                      membershipId: member.id,
+                      locationIds: form.getAll('locationIds').map(String),
+                    }),
+                  );
+                }}
+              >
+                {data.locations.map((location) => (
+                  <label key={location.id} className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      name="locationIds"
+                      value={location.id}
+                      defaultChecked={member.locationIds.includes(location.id)}
+                      disabled={!canManage}
+                      className="size-4 accent-primary"
+                    />
+                    {location.name}
+                  </label>
+                ))}
+                {canManage ? (
+                  <Button type="submit" size="sm" variant="outline" disabled={isPending}>
+                    Guardar sucursales
+                  </Button>
+                ) : null}
+              </form>
             </div>
           ))}
           {canManage ? (
@@ -2087,6 +2178,23 @@ function TeamView({
                 <UserPlus data-icon="inline-start" />
                 Invitar
               </Button>
+              <fieldset className="flex flex-wrap gap-3 sm:col-span-3">
+                <legend className="mb-2 text-xs font-semibold text-muted-foreground">
+                  Sucursales permitidas
+                </legend>
+                {data.locations.map((location) => (
+                  <label key={location.id} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      name="locationIds"
+                      value={location.id}
+                      defaultChecked
+                      className="size-4 accent-primary"
+                    />
+                    {location.name}
+                  </label>
+                ))}
+              </fieldset>
             </form>
           ) : null}
           {data.saas.invitations
@@ -2219,6 +2327,128 @@ function PlanLimit({
         {current} / {limit}
       </p>
     </div>
+  );
+}
+
+function IntegrationsView({
+  data,
+  runAction,
+  isPending,
+}: {
+  data: DashboardData;
+  runAction: (operation: () => Promise<ActionResult>) => void;
+  isPending: boolean;
+}) {
+  const canManage =
+    data.saas.isPlatformAdmin ||
+    ['owner', 'admin'].includes(data.saas.activeOrganization?.role ?? '');
+  const connected = data.saas.integrations.filter(
+    (item) => item.status === 'connected',
+  );
+  return (
+    <>
+      <PageHeading
+        eyebrow="Servicios por establecimiento"
+        title="WhatsApp y Google por sucursal"
+        description="Cada conexión queda identificada y vinculada a la sucursal que atenderá."
+      />
+      <div className="space-y-5">
+        {data.locations.map((location) => {
+          const locationConnections = connected.filter(
+            (item) => item.locationId === location.id,
+          );
+          const whatsappConnections = locationConnections.filter(
+            (item) => item.provider === 'whatsapp',
+          );
+          const googleConnections = locationConnections.filter(
+            (item) => item.provider === 'google_calendar',
+          );
+          return (
+            <Card key={location.id} className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+              <CardHeader>
+                <CardTitle>{location.name}</CardTitle>
+                <CardDescription>
+                  {location.address ?? 'Dirección pendiente'} · {locationConnections.length} conexiones
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-5 xl:grid-cols-2">
+                <div className="space-y-3">
+                  <p className="text-sm font-semibold">Números de WhatsApp</p>
+                  {whatsappConnections.map((connection) => (
+                    <MetaEmbeddedSignup
+                      key={connection.id}
+                      clinicId={data.clinic.id}
+                      locationId={location.id}
+                      locationName={location.name}
+                      connectionId={connection.id}
+                      appId={data.integration.metaEmbeddedSignup.appId}
+                      configId={data.integration.metaEmbeddedSignup.configId}
+                      ready={data.integration.metaEmbeddedSignup.ready}
+                      connected
+                      phoneNumberId={connection.phoneNumberId}
+                    />
+                  ))}
+                  {canManage ? (
+                    <MetaEmbeddedSignup
+                      clinicId={data.clinic.id}
+                      locationId={location.id}
+                      locationName={location.name}
+                      appId={data.integration.metaEmbeddedSignup.appId}
+                      configId={data.integration.metaEmbeddedSignup.configId}
+                      ready={data.integration.metaEmbeddedSignup.ready}
+                      connected={false}
+                      phoneNumberId={null}
+                    />
+                  ) : null}
+                </div>
+                <div className="space-y-3">
+                  <p className="text-sm font-semibold">Calendarios de Google</p>
+                  {googleConnections.map((connection) => (
+                    <div key={connection.id} className="flex items-center gap-3 rounded-xl border p-3">
+                      <CalendarDays className="size-4 text-primary" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
+                          {connection.label ?? 'Google Calendar'}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {connection.externalAccountId ?? 'primary'}
+                        </p>
+                      </div>
+                      {canManage ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={isPending}
+                          onClick={() =>
+                            runAction(() =>
+                              disconnectGoogleCalendar(data.clinic.id, connection.id),
+                            )
+                          }
+                        >
+                          Desconectar
+                        </Button>
+                      ) : null}
+                    </div>
+                  ))}
+                  {canManage ? (
+                    <form action="/api/google-calendar/connect" method="get" className="grid gap-2 rounded-xl border p-3">
+                      <input type="hidden" name="clinicId" value={data.clinic.id} />
+                      <input type="hidden" name="locationId" value={location.id} />
+                      <Input name="label" defaultValue={`Agenda · ${location.name}`} aria-label="Nombre de la conexión" required />
+                      <Input name="calendarId" defaultValue="primary" aria-label="Identificador del calendario" required />
+                      <Button type="submit" variant="outline">
+                        Conectar otro calendario
+                      </Button>
+                    </form>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -2567,7 +2797,7 @@ function SettingsView({
           </CardContent>
         </Card>
 
-        <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+        <Card className="hidden border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
           <CardHeader>
             <CardTitle>Equipo y permisos</CardTitle>
             <CardDescription>
@@ -2681,7 +2911,7 @@ function SettingsView({
           </CardContent>
         </Card>
 
-        <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+        <Card className="hidden border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
           <CardHeader>
             <CardTitle>Sucursales y profesionales</CardTitle>
             <CardDescription>
@@ -2747,10 +2977,7 @@ function SettingsView({
                     placeholder="Especialidad o función"
                   />
                   <Input name="email" type="email" placeholder="Correo" />
-                  <NativeSelect name="locationId" className="w-full">
-                    <NativeSelectOption value="">
-                      Sin sede fija
-                    </NativeSelectOption>
+                  <NativeSelect name="locationId" className="w-full" required>
                     {data.locations.map((location) => (
                       <NativeSelectOption key={location.id} value={location.id}>
                         {location.name}
@@ -2771,7 +2998,7 @@ function SettingsView({
           </CardContent>
         </Card>
 
-        <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+        <Card className="hidden border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
           <CardHeader>
             <CardTitle>Integraciones</CardTitle>
             <CardDescription>
@@ -2812,6 +3039,13 @@ function SettingsView({
                 </div>
                 <MetaEmbeddedSignup
                   clinicId={data.clinic.id}
+                  locationId={data.locations[0]?.id ?? ''}
+                  locationName={data.locations[0]?.name ?? 'Sede principal'}
+                  connectionId={
+                    data.saas.integrations.find(
+                      (item) => item.provider === 'whatsapp' && item.status === 'connected',
+                    )?.id
+                  }
                   appId={data.integration.metaEmbeddedSignup.appId}
                   configId={data.integration.metaEmbeddedSignup.configId}
                   ready={data.integration.metaEmbeddedSignup.ready}
@@ -3097,18 +3331,26 @@ function NewAppointmentDialog({
   open,
   setOpen,
   data,
+  selectedLocationId,
   runAction,
   isPending,
 }: {
   open: boolean;
   setOpen: (open: boolean) => void;
   data: DashboardData;
+  selectedLocationId: string;
   runAction: (
     operation: () => Promise<ActionResult>,
     onSuccess?: () => void,
   ) => void;
   isPending: boolean;
 }) {
+  const [locationId, setLocationId] = useState(
+    selectedLocationId === 'all' ? data.locations[0]?.id ?? '' : selectedLocationId,
+  );
+  const availableDoctors = data.doctors.filter(
+    (doctor) => doctor.active && doctor.locationIds.includes(locationId),
+  );
   function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -3116,6 +3358,7 @@ function NewAppointmentDialog({
       () =>
         createAppointment({
           clinicId: data.clinic.id,
+          locationId: formText(form, 'locationId'),
           patientName: formText(form, 'patientName'),
           phone: formText(form, 'phone'),
           email: formText(form, 'email'),
@@ -3141,6 +3384,23 @@ function NewAppointmentDialog({
         <form onSubmit={submit}>
           <FieldGroup>
             <div className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="appointmentLocationId">Sucursal</FieldLabel>
+                <NativeSelect
+                  id="appointmentLocationId"
+                  name="locationId"
+                  value={locationId}
+                  onChange={(event) => setLocationId(event.target.value)}
+                  required
+                  className="w-full"
+                >
+                  {data.locations.map((location) => (
+                    <NativeSelectOption key={location.id} value={location.id}>
+                      {location.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
               <Field>
                 <FieldLabel htmlFor="patientName">
                   Nombre del paciente
@@ -3203,9 +3463,7 @@ function NewAppointmentDialog({
                   required
                   className="w-full"
                 >
-                  {data.doctors
-                    .filter((item) => item.active)
-                    .map((doctor) => (
+                  {availableDoctors.map((doctor) => (
                       <NativeSelectOption key={doctor.id} value={doctor.id}>
                         {doctor.name}
                       </NativeSelectOption>
@@ -3245,7 +3503,7 @@ function NewAppointmentDialog({
               disabled={
                 isPending ||
                 !data.services.some((item) => item.active) ||
-                !data.doctors.some((item) => item.active)
+                !availableDoctors.length || !locationId
               }
             >
               {isPending ? 'Guardando…' : 'Crear cita'}

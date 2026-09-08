@@ -14,6 +14,9 @@ const accessTokenCache = new Map<string, { token: string; expiresAt: number }>()
 
 type OAuthState = {
   clinicId: string;
+  connectionId: string;
+  locationId: string | null;
+  label: string;
   userId: string;
   calendarId: string;
   expiresAt: number;
@@ -39,11 +42,16 @@ export async function buildGoogleCalendarAuthorizationUrl(input: {
   clinicId: string;
   userId: string;
   calendarId?: string | null;
+  locationId?: string | null;
+  label?: string | null;
 }) {
   if (!googleCalendarConfigured())
     throw new Error('Google Calendar todavía no está configurado en el servidor.');
   const state = await signOAuthState({
     clinicId: input.clinicId,
+    connectionId: `integration_${crypto.randomUUID()}`,
+    locationId: input.locationId?.trim() || null,
+    label: input.label?.trim() || 'Google Calendar',
     userId: input.userId,
     calendarId: input.calendarId?.trim() || 'primary',
     expiresAt: Date.now() + 10 * 60_000,
@@ -95,7 +103,7 @@ export async function completeGoogleCalendarAuthorization(input: {
     );
   const secretReference = await storeOrganizationSecret(
     state.clinicId,
-    'google-calendar',
+    `google-calendar-${state.connectionId}`,
     JSON.stringify({
       refreshToken: result.refresh_token,
       scope: result.scope,
@@ -105,13 +113,14 @@ export async function completeGoogleCalendarAuthorization(input: {
   const now = new Date().toISOString();
   await ensureDatabase();
   await env.DB.prepare(
-    `INSERT INTO integration_connections (id, clinic_id, provider, status, external_account_id, secret_reference, created_at, updated_at)
-     VALUES (?, ?, 'google_calendar', 'connected', ?, ?, ?, ?)
-     ON CONFLICT(clinic_id, provider) DO UPDATE SET status = 'connected', external_account_id = excluded.external_account_id, secret_reference = excluded.secret_reference, updated_at = excluded.updated_at`,
+    `INSERT INTO integration_connections (id, clinic_id, location_id, provider, label, status, external_account_id, secret_reference, created_at, updated_at)
+     VALUES (?, ?, ?, 'google_calendar', ?, 'connected', ?, ?, ?, ?)`,
   )
     .bind(
-      `integration_${crypto.randomUUID()}`,
+      state.connectionId,
       state.clinicId,
+      state.locationId,
+      state.label,
       state.calendarId,
       secretReference,
       now,
@@ -133,9 +142,9 @@ export async function syncAppointmentToGoogleCalendar(
     await ensureDatabase();
     const [connection, appointment] = await Promise.all([
       env.DB.prepare(
-        `SELECT external_account_id AS calendarId, secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'google_calendar' AND status = 'connected'`,
+        `SELECT ic.external_account_id AS calendarId, ic.secret_reference AS secretReference FROM integration_connections ic LEFT JOIN appointments a ON a.id = ? WHERE ic.clinic_id = ? AND ic.provider = 'google_calendar' AND ic.status = 'connected' AND (ic.location_id = a.location_id OR ic.location_id IS NULL) ORDER BY CASE WHEN ic.location_id = a.location_id THEN 0 ELSE 1 END, ic.created_at LIMIT 1`,
       )
-        .bind(clinicId)
+        .bind(appointmentId, clinicId)
         .first<{ calendarId: string | null; secretReference: string | null }>(),
       env.DB.prepare(
         `SELECT a.id, a.starts_at AS startsAt, a.ends_at AS endsAt, a.status, a.notes, a.google_event_id AS googleEventId,
@@ -283,6 +292,8 @@ export async function verifyOAuthState(value: string): Promise<OAuthState> {
   }
   if (
     !payload.clinicId ||
+    !payload.connectionId ||
+    typeof payload.label !== 'string' ||
     !payload.userId ||
     !payload.calendarId ||
     !payload.nonce ||

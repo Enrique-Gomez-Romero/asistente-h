@@ -20,6 +20,8 @@ export type MetaActionResult = {
 
 export async function completeMetaEmbeddedSignup(input: {
   clinicId: string;
+  locationId: string;
+  label?: string;
   code: string;
   wabaId: string;
   phoneNumberId: string;
@@ -35,6 +37,12 @@ export async function completeMetaEmbeddedSignup(input: {
       !/^\d+$/.test(input.phoneNumberId)
     )
       throw new Error('Meta no devolvió una autorización completa.');
+    const location = await env.DB.prepare(
+      `SELECT id FROM locations WHERE id = ? AND clinic_id = ? AND active = 1`,
+    )
+      .bind(input.locationId, input.clinicId)
+      .first();
+    if (!location) throw new Error('Selecciona una sucursal válida.');
     if (!googleSecretManagerConfigured())
       throw new Error(
         'Configura Google Secret Manager antes de conectar números reales.',
@@ -89,16 +97,18 @@ export async function completeMetaEmbeddedSignup(input: {
 
     const secretReference = await storeOrganizationSecret(
       input.clinicId,
-      'whatsapp',
+      `whatsapp-${input.phoneNumberId}`,
       tokenData.access_token,
     );
     const now = new Date().toISOString();
     await env.DB.batch([
       env.DB.prepare(
-        `INSERT INTO integration_connections (id, clinic_id, provider, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES (?, ?, 'whatsapp', 'connected', ?, ?, ?, ?, ?) ON CONFLICT(clinic_id, provider) DO UPDATE SET status = 'connected', external_account_id = excluded.external_account_id, phone_number_id = excluded.phone_number_id, secret_reference = excluded.secret_reference, updated_at = excluded.updated_at`,
+        `INSERT INTO integration_connections (id, clinic_id, location_id, provider, label, status, external_account_id, phone_number_id, secret_reference, created_at, updated_at) VALUES (?, ?, ?, 'whatsapp', ?, 'connected', ?, ?, ?, ?, ?) ON CONFLICT(phone_number_id) DO UPDATE SET clinic_id = excluded.clinic_id, location_id = excluded.location_id, label = excluded.label, status = 'connected', external_account_id = excluded.external_account_id, secret_reference = excluded.secret_reference, updated_at = excluded.updated_at`,
       ).bind(
         `integration_${crypto.randomUUID()}`,
         input.clinicId,
+        input.locationId,
+        input.label?.trim() || phoneData.verified_name || 'WhatsApp',
         input.wabaId,
         input.phoneNumberId,
         secretReference,
@@ -131,13 +141,14 @@ export async function completeMetaEmbeddedSignup(input: {
 
 export async function testMetaConnection(
   clinicId: string,
+  connectionId: string,
 ): Promise<MetaActionResult> {
   return metaAction(async () => {
     await requireClinicAccess(clinicId, ['owner', 'admin']);
     const connection = await env.DB.prepare(
-      `SELECT phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp' AND status = 'connected'`,
+      `SELECT phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE id = ? AND clinic_id = ? AND provider = 'whatsapp' AND status = 'connected'`,
     )
-      .bind(clinicId)
+      .bind(connectionId, clinicId)
       .first<{
         phoneNumberId: string | null;
         secretReference: string | null;
@@ -163,21 +174,22 @@ export async function testMetaConnection(
 
 export async function disconnectMetaWhatsApp(
   clinicId: string,
+  connectionId: string,
 ): Promise<MetaActionResult> {
   return metaAction(async () => {
     const access = await requireClinicAccess(clinicId, ['owner', 'admin']);
     const connection = await env.DB.prepare(
-      `SELECT secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp'`,
+      `SELECT secret_reference AS secretReference FROM integration_connections WHERE id = ? AND clinic_id = ? AND provider = 'whatsapp'`,
     )
-      .bind(clinicId)
+      .bind(connectionId, clinicId)
       .first<{ secretReference: string | null }>();
     if (connection?.secretReference)
       await deleteOrganizationSecret(connection.secretReference);
     const now = new Date().toISOString();
     await env.DB.batch([
       env.DB.prepare(
-        `UPDATE integration_connections SET status = 'disconnected', external_account_id = NULL, phone_number_id = NULL, secret_reference = NULL, updated_at = ? WHERE clinic_id = ? AND provider = 'whatsapp'`,
-      ).bind(now, clinicId),
+        `UPDATE integration_connections SET status = 'disconnected', secret_reference = NULL, updated_at = ? WHERE id = ? AND clinic_id = ? AND provider = 'whatsapp'`,
+      ).bind(now, connectionId, clinicId),
       env.DB.prepare(
         `INSERT INTO audit_logs (id, clinic_id, actor, action, entity_type, entity_id, details, created_at) VALUES (?, ?, ?, 'disconnect', 'integration', 'whatsapp', NULL, ?)`,
       ).bind(`audit_${crypto.randomUUID()}`, clinicId, access.user.email, now),

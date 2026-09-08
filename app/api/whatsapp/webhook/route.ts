@@ -9,7 +9,7 @@ import { syncAppointmentToGoogleCalendar } from '@/lib/google-calendar';
 import { logOperationalEvent } from '@/lib/observability';
 import { normalizePhone } from '@/lib/phone';
 import { appointmentEnd } from '@/lib/scheduling';
-import { recordUsage, resolveClinicByWhatsAppNumber } from '@/lib/saas';
+import { recordUsage, resolveWhatsAppConnection } from '@/lib/saas';
 import { verifyWebhookSignature } from '@/lib/webhook-security';
 import { sendTenantWhatsAppText } from '@/lib/whatsapp';
 
@@ -97,8 +97,8 @@ export async function POST(request: Request) {
         processedStatuses += 1;
       }
       const phoneNumberId = value?.metadata?.phone_number_id;
-      const clinicId = await resolveClinicByWhatsAppNumber(phoneNumberId);
-      if (!clinicId) continue;
+      const connection = await resolveWhatsAppConnection(phoneNumberId);
+      if (!connection) continue;
       const contactName =
         value?.contacts?.[0]?.profile?.name?.trim() || 'Paciente de WhatsApp';
       for (const message of value?.messages ?? []) {
@@ -112,7 +112,8 @@ export async function POST(request: Request) {
         )
           continue;
         await processIncomingMessage(
-          clinicId,
+          connection.clinicId,
+          connection.locationId,
           normalizedPhone,
           contactName,
           message.text.body,
@@ -142,6 +143,7 @@ function safePayload(value: string): WhatsAppPayload | null {
 
 async function processIncomingMessage(
   clinicId: string,
+  locationId: string | null,
   phone: string,
   name: string,
   body: string,
@@ -170,16 +172,16 @@ async function processIncomingMessage(
       .run();
   }
   let conversation = await env.DB.prepare(
-    `SELECT id, bot_paused AS botPaused FROM conversations WHERE clinic_id = ? AND patient_id = ? AND status = 'open' ORDER BY last_message_at DESC LIMIT 1`,
+    `SELECT id, bot_paused AS botPaused FROM conversations WHERE clinic_id = ? AND patient_id = ? AND location_id IS ? AND status = 'open' ORDER BY last_message_at DESC LIMIT 1`,
   )
-    .bind(clinicId, patient.id)
+    .bind(clinicId, patient.id, locationId)
     .first<{ id: string; botPaused: number }>();
   if (!conversation) {
     conversation = { id: `conv_${crypto.randomUUID()}`, botPaused: 0 };
     await env.DB.prepare(
-      `INSERT INTO conversations (id, clinic_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, 'whatsapp', 'open', NULL, 0, 1, ?)`,
+      `INSERT INTO conversations (id, clinic_id, location_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, ?, 'whatsapp', 'open', NULL, 0, 1, ?)`,
     )
-      .bind(conversation.id, clinicId, patient.id, now)
+      .bind(conversation.id, clinicId, locationId, patient.id, now)
       .run();
     await recordUsage(
       clinicId,
@@ -217,7 +219,7 @@ async function processIncomingMessage(
     body,
   );
   if (automaticReply) {
-    await storeAndSendReply(clinicId, conversation.id, phone, automaticReply);
+    await storeAndSendReply(clinicId, locationId, conversation.id, phone, automaticReply);
     return;
   }
   const assistant = await generateAssistantReply(body, clinicId);
@@ -227,11 +229,12 @@ async function processIncomingMessage(
       conversation.id,
       'El paciente o el asistente solicitó apoyo humano.',
     );
-  await storeAndSendReply(clinicId, conversation.id, phone, assistant.reply);
+  await storeAndSendReply(clinicId, locationId, conversation.id, phone, assistant.reply);
 }
 
 async function storeAndSendReply(
   clinicId: string,
+  locationId: string | null,
   conversationId: string,
   phone: string,
   body: string,
@@ -246,7 +249,7 @@ async function storeAndSendReply(
       'UPDATE conversations SET last_message_at = ? WHERE id = ?',
     ).bind(replyTime, conversationId),
   ]);
-  const delivery = await sendTenantWhatsAppText(clinicId, phone, body);
+  const delivery = await sendTenantWhatsAppText(clinicId, phone, body, locationId);
   await env.DB.prepare(
     `UPDATE messages SET external_id = ?, delivery_status = ?, last_error = ? WHERE id = ?`,
   )
@@ -585,7 +588,7 @@ async function bookAppointmentForPatient(input: {
   doctorId: string;
   startsAt: string;
 }): Promise<{ ok: boolean; message: string }> {
-  const [service, doctor] = await Promise.all([
+  const [service, doctor, conversation] = await Promise.all([
     env.DB.prepare(
       `SELECT name, duration_minutes AS durationMinutes FROM services WHERE id = ? AND clinic_id = ? AND active = 1`,
     )
@@ -596,6 +599,11 @@ async function bookAppointmentForPatient(input: {
     )
       .bind(input.doctorId, input.clinicId)
       .first<{ name: string }>(),
+    env.DB.prepare(
+      `SELECT location_id AS locationId FROM conversations WHERE id = ? AND clinic_id = ?`,
+    )
+      .bind(input.conversationId, input.clinicId)
+      .first<{ locationId: string | null }>(),
   ]);
   if (!service || !doctor)
     return { ok: false, message: 'El servicio o profesional ya no está disponible.' };
@@ -606,8 +614,8 @@ async function bookAppointmentForPatient(input: {
   const appointmentId = `appt_${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   const insert = await env.DB.prepare(
-    `INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, 'confirmed', 'whatsapp', NULL, ?
+    `INSERT INTO appointments (id, clinic_id, location_id, patient_id, doctor_id, service_id, starts_at, ends_at, status, source, notes, created_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 'whatsapp', NULL, ?
      WHERE NOT EXISTS (
        SELECT 1 FROM appointments WHERE clinic_id = ? AND doctor_id = ?
        AND status NOT IN ('cancelled', 'no_show') AND starts_at < ? AND ends_at > ?
@@ -616,6 +624,7 @@ async function bookAppointmentForPatient(input: {
     .bind(
       appointmentId,
       input.clinicId,
+      conversation?.locationId ?? null,
       input.patientId,
       input.doctorId,
       input.serviceId,

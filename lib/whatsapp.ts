@@ -15,11 +15,12 @@ export async function sendTenantWhatsAppText(
   clinicId: string,
   phone: string,
   body: string,
+  locationId?: string | null,
 ): Promise<WhatsAppSendResult> {
   return sendTenantWhatsAppPayload(clinicId, phone, {
     type: 'text',
     text: { body },
-  });
+  }, locationId);
 }
 
 export async function sendTenantWhatsAppTemplate(
@@ -50,13 +51,14 @@ async function sendTenantWhatsAppPayload(
   clinicId: string,
   phone: string,
   content: Record<string, unknown>,
+  locationId?: string | null,
 ): Promise<WhatsAppSendResult> {
   await ensureDatabase();
   const recipient = normalizePhone(phone);
   if (!recipient)
     return { sent: false, error: 'El número de WhatsApp no es válido.' };
 
-  const credentials = await getTenantCredentials(clinicId);
+  const credentials = await getTenantCredentials(clinicId, locationId);
   if (!credentials.ok) return { sent: false, error: credentials.error };
 
   let response: Response;
@@ -100,14 +102,15 @@ async function sendTenantWhatsAppPayload(
 
 async function getTenantCredentials(
   clinicId: string,
+  locationId?: string | null,
 ): Promise<
   | { ok: true; phoneNumberId: string; accessToken: string }
   | { ok: false; error: string }
 > {
   const connection = await env.DB.prepare(
-    `SELECT phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp' AND status = 'connected'`,
+    `SELECT phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp' AND status = 'connected' AND (? IS NULL OR location_id = ?) ORDER BY CASE WHEN location_id = ? THEN 0 ELSE 1 END, created_at LIMIT 1`,
   )
-    .bind(clinicId)
+    .bind(clinicId, locationId ?? null, locationId ?? null, locationId ?? null)
     .first<{
       phoneNumberId: string | null;
       secretReference: string | null;

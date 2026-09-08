@@ -56,10 +56,12 @@ export type SaasContext = {
   usage: { aiRequests: number; conversations: number };
   members: Array<{
     id: string;
+    userId: string;
     email: string;
     fullName: string | null;
     role: MembershipRole;
     status: string;
+    locationIds: string[];
   }>;
   invitations: Array<{
     id: string;
@@ -67,9 +69,13 @@ export type SaasContext = {
     role: MembershipRole;
     status: string;
     expiresAt: string;
+    locationIds: string[];
   }>;
   hours: BusinessHour[];
   integrations: Array<{
+    id: string;
+    locationId: string | null;
+    label: string | null;
     provider: string;
     status: string;
     externalAccountId: string | null;
@@ -82,9 +88,11 @@ export type SaasContext = {
     periodStart: string;
     periodEnd: string;
     receivedAt: string;
+    status: string;
     reference: string | null;
     invoiceFolio: string | null;
     invoiceUrl: string | null;
+    receiptUrl: string | null;
   }>;
   platformStats: null | {
     organizations: number;
@@ -221,18 +229,20 @@ export async function getSaasContext(
       .bind(clinicId, periodStart.toISOString())
       .all<{ metric: string; total: number }>(),
     env.DB.prepare(
-      `SELECT u.id, u.email, u.full_name AS fullName, m.role, m.status FROM memberships m JOIN saas_users u ON u.id = m.user_id WHERE m.clinic_id = ? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.full_name`,
+      `SELECT m.id, u.id AS userId, u.email, u.full_name AS fullName, m.role, m.status, COALESCE(GROUP_CONCAT(ml.location_id), '') AS locationIdsCsv FROM memberships m JOIN saas_users u ON u.id = m.user_id LEFT JOIN membership_locations ml ON ml.membership_id = m.id WHERE m.clinic_id = ? GROUP BY m.id, u.id ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.full_name`,
     )
       .bind(clinicId)
       .all<{
         id: string;
+        userId: string;
         email: string;
         fullName: string | null;
         role: MembershipRole;
         status: string;
+        locationIdsCsv: string;
       }>(),
     env.DB.prepare(
-      `SELECT id, email, role, status, expires_at AS expiresAt FROM invitations WHERE clinic_id = ? ORDER BY created_at DESC LIMIT 20`,
+      `SELECT i.id, i.email, i.role, i.status, i.expires_at AS expiresAt, COALESCE(GROUP_CONCAT(il.location_id), '') AS locationIdsCsv FROM invitations i LEFT JOIN invitation_locations il ON il.invitation_id = i.id WHERE i.clinic_id = ? GROUP BY i.id ORDER BY i.created_at DESC LIMIT 20`,
     )
       .bind(clinicId)
       .all<{
@@ -241,6 +251,7 @@ export async function getSaasContext(
         role: MembershipRole;
         status: string;
         expiresAt: string;
+        locationIdsCsv: string;
       }>(),
     env.DB.prepare(
       `SELECT id, day_of_week AS dayOfWeek, opens_at AS opensAt, closes_at AS closesAt, break_start AS breakStart, break_end AS breakEnd, active FROM business_hours WHERE clinic_id = ? ORDER BY day_of_week`,
@@ -248,10 +259,13 @@ export async function getSaasContext(
       .bind(clinicId)
       .all<BusinessHour>(),
     env.DB.prepare(
-      `SELECT provider, status, external_account_id AS externalAccountId, phone_number_id AS phoneNumberId FROM integration_connections WHERE clinic_id = ? ORDER BY provider`,
+      `SELECT id, location_id AS locationId, label, provider, status, external_account_id AS externalAccountId, phone_number_id AS phoneNumberId FROM integration_connections WHERE clinic_id = ? ORDER BY provider, created_at`,
     )
       .bind(clinicId)
       .all<{
+        id: string;
+        locationId: string | null;
+        label: string | null;
         provider: string;
         status: string;
         externalAccountId: string | null;
@@ -261,7 +275,7 @@ export async function getSaasContext(
       .bind(clinicId)
       .first<{ status: string }>(),
     env.DB.prepare(
-      `SELECT id, amount_cents AS amountCents, currency, period_start AS periodStart, period_end AS periodEnd, received_at AS receivedAt, reference, invoice_folio AS invoiceFolio, invoice_url AS invoiceUrl FROM manual_payments WHERE clinic_id = ? ORDER BY received_at DESC LIMIT 24`,
+      `SELECT id, amount_cents AS amountCents, currency, period_start AS periodStart, period_end AS periodEnd, received_at AS receivedAt, status, reference, invoice_folio AS invoiceFolio, invoice_url AS invoiceUrl, receipt_url AS receiptUrl FROM manual_payments WHERE clinic_id = ? ORDER BY created_at DESC LIMIT 24`,
     )
       .bind(clinicId)
       .all<{
@@ -271,9 +285,11 @@ export async function getSaasContext(
         periodStart: string;
         periodEnd: string;
         receivedAt: string;
+        status: string;
         reference: string | null;
         invoiceFolio: string | null;
         invoiceUrl: string | null;
+        receiptUrl: string | null;
       }>(),
     isPlatformAdmin ? getPlatformStats() : Promise.resolve(null),
   ]);
@@ -319,8 +335,14 @@ export async function getSaasContext(
       aiRequests: Number(usage.ai_request ?? 0),
       conversations: Number(usage.conversation ?? 0),
     },
-    members: members.results,
-    invitations: invitations.results,
+    members: members.results.map(({ locationIdsCsv, ...member }) => ({
+      ...member,
+      locationIds: locationIdsCsv ? locationIdsCsv.split(',') : [],
+    })),
+    invitations: invitations.results.map(({ locationIdsCsv, ...invitation }) => ({
+      ...invitation,
+      locationIds: locationIdsCsv ? locationIdsCsv.split(',') : [],
+    })),
     hours: hours.results,
     integrations: integrationList,
     paymentHistory: paymentHistory.results,
@@ -428,8 +450,10 @@ export type PlatformAdminData = {
     amountCents: number;
     currency: string;
     receivedAt: string;
+    status: string;
     reference: string | null;
     invoiceFolio: string | null;
+    receiptUrl: string | null;
   }>;
 };
 
@@ -465,7 +489,7 @@ export async function getPlatformAdminData(
       `SELECT c.id, c.name, COALESCE(op.business_type, 'general') AS businessType, COALESCE(os.status, 'active') AS accountStatus, COALESCE(s.status, 'inactive') AS subscriptionStatus, COALESCE(p.id, '') AS planId, COALESCE(p.name, 'Sin plan') AS planName, COALESCE(s.current_period_end, '') AS periodEnd, (SELECT COUNT(*) FROM memberships m WHERE m.clinic_id = c.id AND m.status = 'active') AS users, (SELECT COUNT(*) FROM conversations cv WHERE cv.clinic_id = c.id) AS conversations, COALESCE((SELECT SUM(quantity) FROM usage_events u WHERE u.clinic_id = c.id AND u.metric = 'ai_request'), 0) AS aiRequests, COALESCE((SELECT status FROM integration_connections ic WHERE ic.clinic_id = c.id AND ic.provider = 'whatsapp'), 'pending') AS whatsappStatus, c.created_at AS createdAt FROM clinics c LEFT JOIN organization_profiles op ON op.clinic_id = c.id LEFT JOIN organization_states os ON os.clinic_id = c.id LEFT JOIN subscriptions s ON s.clinic_id = c.id LEFT JOIN subscription_plans p ON p.id = s.plan_id ORDER BY c.created_at DESC`,
     ).all<PlatformAdminData['organizations'][number]>(),
     env.DB.prepare(
-      `SELECT mp.id, mp.clinic_id AS clinicId, c.name AS clinicName, mp.amount_cents AS amountCents, mp.currency, mp.received_at AS receivedAt, mp.reference, mp.invoice_folio AS invoiceFolio FROM manual_payments mp JOIN clinics c ON c.id = mp.clinic_id ORDER BY mp.received_at DESC LIMIT 30`,
+      `SELECT mp.id, mp.clinic_id AS clinicId, c.name AS clinicName, mp.amount_cents AS amountCents, mp.currency, mp.received_at AS receivedAt, mp.status, mp.reference, mp.invoice_folio AS invoiceFolio, mp.receipt_url AS receiptUrl FROM manual_payments mp JOIN clinics c ON c.id = mp.clinic_id ORDER BY mp.created_at DESC LIMIT 30`,
     ).all<PlatformAdminData['recentPayments'][number]>(),
   ]);
   return {
@@ -473,7 +497,7 @@ export async function getPlatformAdminData(
     infrastructure: {
       gemini: Boolean(process.env.GEMINI_API_KEY),
       invitationEmail: Boolean(
-        process.env.RESEND_API_KEY && process.env.EMAIL_FROM,
+        process.env.RESEND_API_KEY && process.env.EMAIL_FROM && process.env.PUBLIC_APP_URL,
       ),
       metaEmbeddedSignup: Boolean(
         process.env.META_APP_ID &&
@@ -514,17 +538,24 @@ export async function recordUsage(
 export async function resolveClinicByWhatsAppNumber(
   phoneNumberId?: string,
 ): Promise<string | null> {
+  const connection = await resolveWhatsAppConnection(phoneNumberId);
+  return connection?.clinicId ?? null;
+}
+
+export async function resolveWhatsAppConnection(
+  phoneNumberId?: string,
+): Promise<{ clinicId: string; locationId: string | null } | null> {
   await ensureDatabase();
   if (phoneNumberId) {
     const connection = await env.DB.prepare(
-      `SELECT clinic_id AS clinicId FROM integration_connections WHERE provider = 'whatsapp' AND phone_number_id = ? AND status = 'connected'`,
+      `SELECT clinic_id AS clinicId, location_id AS locationId FROM integration_connections WHERE provider = 'whatsapp' AND phone_number_id = ? AND status = 'connected'`,
     )
       .bind(phoneNumberId)
-      .first<{ clinicId: string }>();
-    if (connection) return connection.clinicId;
+      .first<{ clinicId: string; locationId: string | null }>();
+    if (connection) return connection;
   }
   if (phoneNumberId && phoneNumberId === process.env.WHATSAPP_PHONE_NUMBER_ID)
-    return 'clinic_demo';
+    return { clinicId: 'clinic_demo', locationId: 'location_demo' };
   return null;
 }
 

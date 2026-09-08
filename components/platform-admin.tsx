@@ -21,6 +21,7 @@ import {
 import {
   adminRecordManualPayment,
   adminSetOrganizationStatus,
+  adminUpdateManualPaymentStatus,
   adminUpdateSubscription,
   type CommercialActionResult,
 } from '@/app/commercial-actions';
@@ -78,9 +79,11 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
         periodStart: value(form, 'periodStart'),
         periodEnd: value(form, 'periodEnd'),
         receivedAt: value(form, 'receivedAt'),
+        status: value(form, 'status') as 'pending' | 'paid' | 'overdue' | 'suspended',
         reference: value(form, 'reference'),
         invoiceFolio: value(form, 'invoiceFolio'),
         invoiceUrl: value(form, 'invoiceUrl'),
+        receiptUrl: value(form, 'receiptUrl'),
         notes: value(form, 'notes'),
       }),
     );
@@ -257,6 +260,15 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                     </Field>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <Field>
+                        <FieldLabel htmlFor="payment-status">Estado</FieldLabel>
+                        <NativeSelect id="payment-status" name="status" defaultValue="paid">
+                          <NativeSelectOption value="pending">Pendiente</NativeSelectOption>
+                          <NativeSelectOption value="paid">Pagado</NativeSelectOption>
+                          <NativeSelectOption value="overdue">Vencido</NativeSelectOption>
+                          <NativeSelectOption value="suspended">Suspendido</NativeSelectOption>
+                        </NativeSelect>
+                      </Field>
+                      <Field>
                         <FieldLabel htmlFor="payment-amount">
                           Monto MXN
                         </FieldLabel>
@@ -271,7 +283,7 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                       </Field>
                       <Field>
                         <FieldLabel htmlFor="payment-received">
-                          Fecha recibida
+                          Fecha de registro
                         </FieldLabel>
                         <Input
                           id="payment-received"
@@ -282,6 +294,17 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                         />
                       </Field>
                     </div>
+                    <Field>
+                      <FieldLabel htmlFor="payment-receipt-url">
+                        Enlace del comprobante (opcional)
+                      </FieldLabel>
+                      <Input
+                        id="payment-receipt-url"
+                        name="receiptUrl"
+                        type="url"
+                        placeholder="https://..."
+                      />
+                    </Field>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <Field>
                         <FieldLabel htmlFor="payment-start">
@@ -398,6 +421,9 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                         {money(payment.amountCents, payment.currency)} ·{' '}
                         {formatDate(payment.receivedAt)}
                       </p>
+                      <span className="mt-1 inline-flex rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold">
+                        {paymentStatusLabel(payment.status)}
+                      </span>
                       <p className="mt-1 text-[11px] text-muted-foreground">
                         {payment.invoiceFolio
                           ? `Factura ${payment.invoiceFolio}`
@@ -406,6 +432,39 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                           ? ` · Ref. ${payment.reference}`
                           : ''}
                       </p>
+                      {payment.receiptUrl ? (
+                        <a
+                          href={payment.receiptUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1 inline-flex text-xs font-medium text-primary"
+                        >
+                          Ver comprobante
+                        </a>
+                      ) : null}
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {(['pending', 'paid', 'overdue', 'suspended'] as const).map(
+                          (status) => (
+                            <Button
+                              key={status}
+                              type="button"
+                              size="sm"
+                              variant={payment.status === status ? 'secondary' : 'ghost'}
+                              disabled={pending || payment.status === status}
+                              onClick={() =>
+                                run(() =>
+                                  adminUpdateManualPaymentStatus({
+                                    paymentId: payment.id,
+                                    status,
+                                  }),
+                                )
+                              }
+                            >
+                              {paymentStatusLabel(status)}
+                            </Button>
+                          ),
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -544,24 +603,63 @@ function OrganizationRow({
               onChange={(event) => setPeriodEnd(event.target.value)}
             />
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={() =>
-              run(() =>
-                adminUpdateSubscription({
-                  clinicId: organization.id,
-                  planId,
-                  status,
-                  periodEnd,
-                }),
-              )
-            }
-          >
-            <CalendarClock data-icon="inline-start" />
-            Guardar suscripción
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() =>
+                run(() =>
+                  adminUpdateSubscription({
+                    clinicId: organization.id,
+                    planId,
+                    status,
+                    periodEnd,
+                  }),
+                )
+              }
+            >
+              <CalendarClock data-icon="inline-start" />
+              Guardar
+            </Button>
+            <Button
+              size="sm"
+              disabled={pending}
+              onClick={() => {
+                setStatus('active');
+                run(() =>
+                  adminUpdateSubscription({
+                    clinicId: organization.id,
+                    planId,
+                    status: 'active',
+                    periodEnd,
+                  }),
+                );
+              }}
+            >
+              Activar
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={pending}
+              onClick={() => {
+                const renewal = renewalDate(periodEnd);
+                setStatus('active');
+                setPeriodEnd(renewal);
+                run(() =>
+                  adminUpdateSubscription({
+                    clinicId: organization.id,
+                    planId,
+                    status: 'active',
+                    periodEnd: renewal,
+                  }),
+                );
+              }}
+            >
+              Renovar 30 días
+            </Button>
+          </div>
         </div>
       </TableCell>
       <TableCell>
@@ -630,6 +728,23 @@ function Metric({
       </CardContent>
     </Card>
   );
+}
+
+function paymentStatusLabel(status: string) {
+  return {
+    pending: 'Pendiente',
+    paid: 'Pagado',
+    overdue: 'Vencido',
+    suspended: 'Suspendido',
+  }[status] ?? status;
+}
+
+function renewalDate(currentPeriodEnd: string) {
+  const today = new Date();
+  const current = new Date(`${currentPeriodEnd}T12:00:00.000Z`);
+  const base = Number.isNaN(current.getTime()) || current < today ? today : current;
+  base.setUTCDate(base.getUTCDate() + 30);
+  return base.toISOString().slice(0, 10);
 }
 function value(form: FormData, key: string) {
   const result = form.get(key);

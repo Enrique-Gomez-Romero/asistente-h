@@ -13,6 +13,13 @@ type PasswordResetEmailInput = {
   token: string;
 };
 
+type SubscriptionEmailInput = {
+  recipient: string;
+  organizationName: string;
+  subject: string;
+  message: string;
+};
+
 export async function sendInvitationEmail(
   input: InvitationEmailInput,
 ): Promise<{ sent: boolean; error?: string }> {
@@ -92,6 +99,35 @@ export async function sendPasswordResetEmail(
       sent: false,
       error: `El correo no pudo enviarse (${response.status}).`,
     };
+  return { sent: true };
+}
+
+export async function sendSubscriptionEmail(
+  input: SubscriptionEmailInput,
+): Promise<{ sent: boolean; error?: string }> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.EMAIL_FROM;
+  if (!apiKey || !from)
+    return { sent: false, error: 'El servicio de correo todavía no está configurado.' };
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': `subscription-${crypto.randomUUID()}`,
+      'User-Agent': 'Asistente-H/1.0',
+    },
+    body: JSON.stringify({
+      from,
+      to: [input.recipient],
+      subject: input.subject,
+      html: `<!doctype html><html lang="es"><body style="margin:0;background:#f4f8f6;font-family:Arial,sans-serif;color:#173b34"><div style="max-width:560px;margin:40px auto;padding:32px;background:white;border-radius:20px"><div style="font-size:20px;font-weight:700;margin-bottom:24px">Asistente H</div><h1 style="font-size:26px;line-height:1.2">${escapeHtml(input.organizationName)}</h1><p style="line-height:1.6;color:#61716c">${escapeHtml(input.message)}</p></div></body></html>`,
+      text: `${input.organizationName}: ${input.message}`,
+      tags: [{ name: 'category', value: 'subscription_notice' }],
+    }),
+  });
+  if (!response.ok)
+    return { sent: false, error: `El correo no pudo enviarse (${response.status}).` };
   return { sent: true };
 }
 
