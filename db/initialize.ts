@@ -100,7 +100,7 @@ async function initializeDatabase(): Promise<void> {
   const existing = await d1
     .prepare('SELECT id FROM clinics LIMIT 1')
     .first<{ id: string }>();
-  if (!existing) {
+  if (!existing && process.env.SEED_DEMO_DATA === 'true') {
     const inserts = [
       d1
         .prepare(

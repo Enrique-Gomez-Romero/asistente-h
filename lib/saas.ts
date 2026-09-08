@@ -147,10 +147,11 @@ export async function ensureSaasUser(user: AppUser): Promise<void> {
     .first<{ id: string }>();
   if (membership) return;
 
-  const demoOwner = await env.DB.prepare(
-    `SELECT id FROM memberships WHERE clinic_id = 'clinic_demo' AND role = 'owner' AND status = 'active' LIMIT 1`,
-  ).first<{ id: string }>();
-  if (!demoOwner && shouldBePlatformAdmin) {
+  if (shouldBePlatformAdmin && process.env.SEED_DEMO_DATA === 'true') {
+    const demoOwner = await env.DB.prepare(
+      `SELECT id FROM memberships WHERE clinic_id = 'clinic_demo' AND role = 'owner' AND status = 'active' LIMIT 1`,
+    ).first<{ id: string }>();
+    if (demoOwner) return;
     await env.DB.prepare(
       `INSERT OR IGNORE INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, 'clinic_demo', ?, 'owner', 'active', ?)`,
     )
@@ -339,10 +340,12 @@ export async function getSaasContext(
       ...member,
       locationIds: locationIdsCsv ? locationIdsCsv.split(',') : [],
     })),
-    invitations: invitations.results.map(({ locationIdsCsv, ...invitation }) => ({
-      ...invitation,
-      locationIds: locationIdsCsv ? locationIdsCsv.split(',') : [],
-    })),
+    invitations: invitations.results.map(
+      ({ locationIdsCsv, ...invitation }) => ({
+        ...invitation,
+        locationIds: locationIdsCsv ? locationIdsCsv.split(',') : [],
+      }),
+    ),
     hours: hours.results,
     integrations: integrationList,
     paymentHistory: paymentHistory.results,
@@ -497,7 +500,9 @@ export async function getPlatformAdminData(
     infrastructure: {
       gemini: Boolean(process.env.GEMINI_API_KEY),
       invitationEmail: Boolean(
-        process.env.RESEND_API_KEY && process.env.EMAIL_FROM && process.env.PUBLIC_APP_URL,
+        process.env.RESEND_API_KEY &&
+        process.env.EMAIL_FROM &&
+        process.env.PUBLIC_APP_URL,
       ),
       metaEmbeddedSignup: Boolean(
         process.env.META_APP_ID &&

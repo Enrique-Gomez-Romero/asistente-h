@@ -17,10 +17,7 @@ import {
   type AppUser,
 } from '@/lib/auth';
 import { sendPasswordResetEmail } from '@/lib/email';
-import {
-  acceptInvitationToken,
-  getInvitationDetails,
-} from '@/lib/invitations';
+import { acceptInvitationToken, getInvitationDetails } from '@/lib/invitations';
 
 export type AuthActionState = {
   ok: boolean;
@@ -99,11 +96,6 @@ export async function bootstrapAdminAction(
     env.DB.prepare(
       'INSERT OR IGNORE INTO platform_admins (user_id, created_at) VALUES (?, ?)',
     ).bind(userId, now),
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO memberships
-       (id, clinic_id, user_id, role, status, created_at)
-       VALUES (?, 'clinic_demo', ?, 'owner', 'active', ?)`,
-    ).bind(`membership_${crypto.randomUUID()}`, userId, now),
   );
   await env.DB.batch(statements);
   await createPasswordCredential(userId, password);
@@ -122,7 +114,8 @@ export async function registerInvitedUserAction(
   if (invitation.hasCredential)
     return {
       ok: false,
-      message: 'Ya existe una cuenta con este correo. Inicia sesión para aceptar la invitación.',
+      message:
+        'Ya existe una cuenta con este correo. Inicia sesión para aceptar la invitación.',
     };
   const fullName = formText(formData, 'fullName').trim();
   const password = formText(formData, 'password');
@@ -168,7 +161,9 @@ export async function registerInvitedUserAction(
   const result = await acceptInvitationToken(token, user);
   if (!result.ok) return result;
   await createSession(userId);
-  redirect(`/app?organization=${encodeURIComponent(result.organizationId)}&joined=1`);
+  redirect(
+    `/app?organization=${encodeURIComponent(result.organizationId)}&joined=1`,
+  );
 }
 
 export async function requestPasswordResetAction(
@@ -262,7 +257,9 @@ export async function resetPasswordAction(
 async function isPlatformAdmin(userId: string) {
   await ensureDatabase();
   return Boolean(
-    await env.DB.prepare('SELECT user_id FROM platform_admins WHERE user_id = ?')
+    await env.DB.prepare(
+      'SELECT user_id FROM platform_admins WHERE user_id = ?',
+    )
       .bind(userId)
       .first(),
   );
@@ -274,5 +271,7 @@ function formText(formData: FormData, key: string) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'No se pudo completar la solicitud.';
+  return error instanceof Error
+    ? error.message
+    : 'No se pudo completar la solicitud.';
 }
