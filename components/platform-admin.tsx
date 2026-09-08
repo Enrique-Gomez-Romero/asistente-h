@@ -18,13 +18,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import {
-  adminRecordManualPayment,
-  adminSetOrganizationStatus,
-  adminUpdateManualPaymentStatus,
-  adminUpdateSubscription,
-  type CommercialActionResult,
-} from '@/app/commercial-actions';
+import type { CommercialActionResult } from '@/app/commercial-actions';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Card,
@@ -73,13 +67,17 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     run(() =>
-      adminRecordManualPayment({
+      runPlatformAdminAction('record-payment', {
         clinicId: value(form, 'clinicId'),
         amountPesos: Number(value(form, 'amountPesos')),
         periodStart: value(form, 'periodStart'),
         periodEnd: value(form, 'periodEnd'),
         receivedAt: value(form, 'receivedAt'),
-        status: value(form, 'status') as 'pending' | 'paid' | 'overdue' | 'suspended',
+        status: value(form, 'status') as
+          | 'pending'
+          | 'paid'
+          | 'overdue'
+          | 'suspended',
         reference: value(form, 'reference'),
         invoiceFolio: value(form, 'invoiceFolio'),
         invoiceUrl: value(form, 'invoiceUrl'),
@@ -119,7 +117,10 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
               Nuevo negocio
             </Link>
             <Link href="/app" prefetch={false}>
-              <Button variant="ghost" className="text-white hover:bg-white/10 hover:text-white">
+              <Button
+                variant="ghost"
+                className="text-white hover:bg-white/10 hover:text-white"
+              >
                 Ver panel cliente
               </Button>
             </Link>
@@ -145,10 +146,7 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
             estado de cada organización.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            <Link
-              href="/platform/negocios/nuevo"
-              className={buttonVariants()}
-            >
+            <Link href="/platform/negocios/nuevo" className={buttonVariants()}>
               <Plus data-icon="inline-start" />
               Crear negocio cliente
             </Link>
@@ -261,11 +259,23 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                     <div className="grid gap-3 sm:grid-cols-2">
                       <Field>
                         <FieldLabel htmlFor="payment-status">Estado</FieldLabel>
-                        <NativeSelect id="payment-status" name="status" defaultValue="paid">
-                          <NativeSelectOption value="pending">Pendiente</NativeSelectOption>
-                          <NativeSelectOption value="paid">Pagado</NativeSelectOption>
-                          <NativeSelectOption value="overdue">Vencido</NativeSelectOption>
-                          <NativeSelectOption value="suspended">Suspendido</NativeSelectOption>
+                        <NativeSelect
+                          id="payment-status"
+                          name="status"
+                          defaultValue="paid"
+                        >
+                          <NativeSelectOption value="pending">
+                            Pendiente
+                          </NativeSelectOption>
+                          <NativeSelectOption value="paid">
+                            Pagado
+                          </NativeSelectOption>
+                          <NativeSelectOption value="overdue">
+                            Vencido
+                          </NativeSelectOption>
+                          <NativeSelectOption value="suspended">
+                            Suspendido
+                          </NativeSelectOption>
                         </NativeSelect>
                       </Field>
                       <Field>
@@ -443,27 +453,32 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                         </a>
                       ) : null}
                       <div className="mt-2 flex flex-wrap gap-1">
-                        {(['pending', 'paid', 'overdue', 'suspended'] as const).map(
-                          (status) => (
-                            <Button
-                              key={status}
-                              type="button"
-                              size="sm"
-                              variant={payment.status === status ? 'secondary' : 'ghost'}
-                              disabled={pending || payment.status === status}
-                              onClick={() =>
-                                run(() =>
-                                  adminUpdateManualPaymentStatus({
+                        {(
+                          ['pending', 'paid', 'overdue', 'suspended'] as const
+                        ).map((status) => (
+                          <Button
+                            key={status}
+                            type="button"
+                            size="sm"
+                            variant={
+                              payment.status === status ? 'secondary' : 'ghost'
+                            }
+                            disabled={pending || payment.status === status}
+                            onClick={() =>
+                              run(() =>
+                                runPlatformAdminAction(
+                                  'update-payment-status',
+                                  {
                                     paymentId: payment.id,
                                     status,
-                                  }),
-                                )
-                              }
-                            >
-                              {paymentStatusLabel(status)}
-                            </Button>
-                          ),
-                        )}
+                                  },
+                                ),
+                              )
+                            }
+                          >
+                            {paymentStatusLabel(status)}
+                          </Button>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -610,7 +625,7 @@ function OrganizationRow({
               disabled={pending}
               onClick={() =>
                 run(() =>
-                  adminUpdateSubscription({
+                  runPlatformAdminAction('update-subscription', {
                     clinicId: organization.id,
                     planId,
                     status,
@@ -628,7 +643,7 @@ function OrganizationRow({
               onClick={() => {
                 setStatus('active');
                 run(() =>
-                  adminUpdateSubscription({
+                  runPlatformAdminAction('update-subscription', {
                     clinicId: organization.id,
                     planId,
                     status: 'active',
@@ -648,7 +663,7 @@ function OrganizationRow({
                 setStatus('active');
                 setPeriodEnd(renewal);
                 run(() =>
-                  adminUpdateSubscription({
+                  runPlatformAdminAction('update-subscription', {
                     clinicId: organization.id,
                     planId,
                     status: 'active',
@@ -678,7 +693,7 @@ function OrganizationRow({
             disabled={pending}
             onClick={() =>
               run(() =>
-                adminSetOrganizationStatus({
+                runPlatformAdminAction('set-organization-status', {
                   clinicId: organization.id,
                   status:
                     organization.accountStatus === 'suspended'
@@ -731,18 +746,21 @@ function Metric({
 }
 
 function paymentStatusLabel(status: string) {
-  return {
-    pending: 'Pendiente',
-    paid: 'Pagado',
-    overdue: 'Vencido',
-    suspended: 'Suspendido',
-  }[status] ?? status;
+  return (
+    {
+      pending: 'Pendiente',
+      paid: 'Pagado',
+      overdue: 'Vencido',
+      suspended: 'Suspendido',
+    }[status] ?? status
+  );
 }
 
 function renewalDate(currentPeriodEnd: string) {
   const today = new Date();
   const current = new Date(`${currentPeriodEnd}T12:00:00.000Z`);
-  const base = Number.isNaN(current.getTime()) || current < today ? today : current;
+  const base =
+    Number.isNaN(current.getTime()) || current < today ? today : current;
   base.setUTCDate(base.getUTCDate() + 30);
   return base.toISOString().slice(0, 10);
 }
@@ -761,4 +779,36 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(
     new Date(date),
   );
+}
+
+async function runPlatformAdminAction(
+  action:
+    | 'update-subscription'
+    | 'set-organization-status'
+    | 'record-payment'
+    | 'update-payment-status',
+  input: Record<string, unknown>,
+): Promise<CommercialActionResult> {
+  try {
+    const response = await fetch('/api/platform/actions', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, input }),
+    });
+    const result = (await response.json()) as CommercialActionResult;
+    if (response.status === 401) {
+      window.location.assign('/login?next=%2Fplatform');
+      return {
+        ok: false,
+        message: 'Tu sesión expiró. Inicia sesión otra vez.',
+      };
+    }
+    return result;
+  } catch {
+    return {
+      ok: false,
+      message: 'No fue posible guardar el cambio. Intenta de nuevo.',
+    };
+  }
 }
