@@ -23,6 +23,7 @@ export type ActionResult = {
   ok: boolean;
   message: string;
   organizationId?: string;
+  invitationPath?: string;
 };
 
 type AppointmentInput = {
@@ -580,6 +581,8 @@ export async function sendConversationMessage(
 export async function createOrganization(input: {
   name: string;
   businessType: string;
+  planId?: string;
+  ownerEmail?: string;
   phone?: string;
   address?: string;
   timezone?: string;
@@ -601,12 +604,24 @@ export async function createOrganization(input: {
     const name = input.name.trim();
     if (name.length < 3) throw new Error('Escribe el nombre del negocio.');
     const businessType = input.businessType.trim() || 'dental';
+    const ownerEmail = (input.ownerEmail || user.email)
+      .trim()
+      .toLocaleLowerCase('es-MX');
+    if (!/^\S+@\S+\.\S+$/.test(ownerEmail))
+      throw new Error('Escribe un correo válido para el propietario.');
+    const requestedPlan = input.planId?.trim() || 'plan_trial';
+    const plan = await env.DB.prepare(
+      'SELECT id FROM subscription_plans WHERE id = ? AND active = 1 LIMIT 1',
+    )
+      .bind(requestedPlan)
+      .first<{ id: string }>();
+    if (!plan) throw new Error('Selecciona un plan válido.');
     const timezone = input.timezone?.trim() || 'America/Mexico_City';
     const id = `org_${crypto.randomUUID()}`;
     const locationId = `location_${crypto.randomUUID()}`;
     const professionalId = `professional_${crypto.randomUUID()}`;
     const now = new Date().toISOString();
-    const trialEnd = new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString();
+    const trialEnd = new Date(Date.now() + 14 * 24 * 60 * 60_000).toISOString();
     let slug = slugify(name) || id;
     if (
       await env.DB.prepare(
@@ -648,18 +663,16 @@ export async function createOrganization(input: {
         input.phone?.trim() || null,
       ),
       env.DB.prepare(
-        `INSERT INTO subscriptions (id, clinic_id, plan_id, status, current_period_start, current_period_end, trial_ends_at, billing_provider, customer_reference, subscription_reference, updated_at) VALUES (?, ?, 'plan_trial', 'trialing', ?, ?, ?, NULL, NULL, NULL, ?)`,
+        `INSERT INTO subscriptions (id, clinic_id, plan_id, status, current_period_start, current_period_end, trial_ends_at, billing_provider, customer_reference, subscription_reference, updated_at) VALUES (?, ?, ?, 'trialing', ?, ?, ?, NULL, NULL, NULL, ?)`,
       ).bind(
         `subscription_${crypto.randomUUID()}`,
         id,
+        plan.id,
         now,
         trialEnd,
         trialEnd,
         now,
       ),
-      env.DB.prepare(
-        `INSERT INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, ?, ?, 'owner', 'active', ?)`,
-      ).bind(`membership_${crypto.randomUUID()}`, id, user.userId, now),
       env.DB.prepare(
         `INSERT INTO integration_connections (id, clinic_id, provider, status, created_at, updated_at) VALUES (?, ?, 'whatsapp', 'pending', ?, ?)`,
       ).bind(`integration_${crypto.randomUUID()}`, id, now, now),
@@ -674,8 +687,8 @@ export async function createOrganization(input: {
       ).bind(
         professionalId,
         id,
-        user.fullName || user.displayName,
-        user.email,
+        'Profesional principal',
+        ownerEmail,
         businessType === 'dental' ? 'Odontología general' : 'Profesional',
       ),
       env.DB.prepare(
@@ -737,13 +750,49 @@ export async function createOrganization(input: {
         ),
       );
     }
+    let invitationPath: string | undefined;
+    let invitationIdForEmail: string | undefined;
+    let invitationTokenForEmail: string | undefined;
+    if (ownerEmail === user.email) {
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO memberships (id, clinic_id, user_id, role, status, created_at) VALUES (?, ?, ?, 'owner', 'active', ?)`,
+        ).bind(`membership_${crypto.randomUUID()}`, id, user.userId, now),
+      );
+    } else {
+      const invitationId = `invitation_${crypto.randomUUID()}`;
+      const token = createInvitationToken();
+      const tokenHash = await hashInvitationToken(token);
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO invitations (id, clinic_id, email, role, status, token_hash, expires_at, created_at) VALUES (?, ?, ?, 'owner', 'pending', ?, ?, ?)`,
+        ).bind(invitationId, id, ownerEmail, tokenHash, trialEnd, now),
+      );
+      invitationPath = `/invite/${encodeURIComponent(token)}`;
+      invitationIdForEmail = invitationId;
+      invitationTokenForEmail = token;
+    }
     await env.DB.batch(statements);
+    if (invitationIdForEmail && invitationTokenForEmail) {
+      await sendInvitationEmail({
+        invitationId: invitationIdForEmail,
+        recipient: ownerEmail,
+        inviterName: user.displayName,
+        organizationName: name,
+        role: 'Propietario',
+        token: invitationTokenForEmail,
+      });
+    }
     revalidatePath('/app');
+    revalidatePath('/platform');
     return {
       ok: true,
       message:
-        'Negocio creado. Ya puedes configurar servicios, horarios e integraciones.',
+        invitationPath
+          ? 'Negocio creado. Copia la invitación y envíala al propietario.'
+          : 'Negocio creado y asignado a tu cuenta.',
       organizationId: id,
+      invitationPath,
     };
   });
 }
@@ -935,6 +984,7 @@ export async function inviteMember(input: {
       message: delivery.sent
         ? 'Invitación enviada por correo. Vence en siete días.'
         : `Invitación creada, pero el correo quedó pendiente. ${delivery.error}`,
+      invitationPath: `/invite/${encodeURIComponent(token)}`,
     };
   });
 }
@@ -980,10 +1030,11 @@ export async function resendInvitation(
     });
     revalidatePath('/app');
     return {
-      ok: delivery.sent,
+      ok: true,
       message: delivery.sent
         ? 'Invitación reenviada y vigencia renovada.'
-        : (delivery.error ?? 'No se pudo enviar el correo.'),
+        : `Se renovó la invitación. ${delivery.error ?? 'El correo no pudo enviarse; copia el enlace manualmente.'}`,
+      invitationPath: `/invite/${encodeURIComponent(token)}`,
     };
   });
 }

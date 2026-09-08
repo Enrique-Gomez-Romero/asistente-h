@@ -28,12 +28,20 @@ export default async function Home() {
             <p className="text-[11px] text-[#62756f]">Recepción inteligente</p>
           </div>
         </div>
-        <a href={destination} target="_top">
-          <Button variant={user ? 'default' : 'outline'}>
-            {user ? 'Abrir mi panel' : 'Iniciar sesión'}
-            <ArrowRight data-icon="inline-end" />
-          </Button>
-        </a>
+        <div className="flex items-center gap-2">
+          <Link
+            className="px-3 text-sm font-medium hover:text-[#1e806a]"
+            href="/planes"
+          >
+            Planes
+          </Link>
+          <a href={destination} target="_top">
+            <Button variant={user ? 'default' : 'outline'}>
+              {user ? 'Abrir mi panel' : 'Iniciar sesión'}
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+          </a>
+        </div>
       </header>
       <section className="relative mx-auto grid min-h-[calc(100vh-80px)] max-w-7xl items-center gap-12 px-5 py-14 md:px-8 lg:grid-cols-[1.05fr_0.95fr]">
         <div className="relative z-10">

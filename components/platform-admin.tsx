@@ -11,6 +11,7 @@ import {
   CreditCard,
   ExternalLink,
   MessageCircle,
+  Plus,
   Search,
   ShieldCheck,
   Sparkles,
@@ -23,7 +24,7 @@ import {
   adminUpdateSubscription,
   type CommercialActionResult,
 } from '@/app/commercial-actions';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -107,9 +108,18 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <a href="/app" target="_top">
-              <Button variant="secondary">Ir al panel de cliente</Button>
-            </a>
+            <Link
+              href="/platform/negocios/nuevo"
+              className={buttonVariants({ variant: 'secondary' })}
+            >
+              <Plus data-icon="inline-start" />
+              Nuevo negocio
+            </Link>
+            <Link href="/app" prefetch={false}>
+              <Button variant="ghost" className="text-white hover:bg-white/10 hover:text-white">
+                Ver panel cliente
+              </Button>
+            </Link>
             <Link href="/logout">
               <Button
                 variant="ghost"
@@ -131,6 +141,21 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
             Gestiona planes, vigencias, transferencias, facturación manual y
             estado de cada organización.
           </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link
+              href="/platform/negocios/nuevo"
+              className={buttonVariants()}
+            >
+              <Plus data-icon="inline-start" />
+              Crear negocio cliente
+            </Link>
+            <Link
+              href="/planes"
+              className={buttonVariants({ variant: 'outline' })}
+            >
+              Ver página de planes
+            </Link>
+          </div>
         </div>
         <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric

@@ -399,6 +399,8 @@ export type PlatformAdminData = {
     id: string;
     name: string;
     slug: string;
+    description: string | null;
+    priceCents: number | null;
     maxUsers: number;
     maxLocations: number;
     maxConversations: number;
@@ -431,6 +433,16 @@ export type PlatformAdminData = {
   }>;
 };
 
+export type ActivePlan = PlatformAdminData['plans'][number];
+
+export async function getActivePlans(): Promise<ActivePlan[]> {
+  await ensureDatabase();
+  const plans = await env.DB.prepare(
+    `SELECT id, name, slug, description, price_cents AS priceCents, max_users AS maxUsers, max_locations AS maxLocations, max_conversations AS maxConversations, max_ai_requests AS maxAiRequests FROM subscription_plans WHERE active = 1 ORDER BY max_locations, max_users`,
+  ).all<ActivePlan>();
+  return plans.results;
+}
+
 export async function getPlatformAdminData(
   user: AppUser,
 ): Promise<PlatformAdminData> {
@@ -447,7 +459,7 @@ export async function getPlatformAdminData(
   const [stats, plans, organizations, payments] = await Promise.all([
     getPlatformStats(),
     env.DB.prepare(
-      `SELECT id, name, slug, max_users AS maxUsers, max_locations AS maxLocations, max_conversations AS maxConversations, max_ai_requests AS maxAiRequests FROM subscription_plans WHERE active = 1 ORDER BY max_users`,
+      `SELECT id, name, slug, description, price_cents AS priceCents, max_users AS maxUsers, max_locations AS maxLocations, max_conversations AS maxConversations, max_ai_requests AS maxAiRequests FROM subscription_plans WHERE active = 1 ORDER BY max_locations, max_users`,
     ).all<PlatformAdminData['plans'][number]>(),
     env.DB.prepare(
       `SELECT c.id, c.name, COALESCE(op.business_type, 'general') AS businessType, COALESCE(os.status, 'active') AS accountStatus, COALESCE(s.status, 'inactive') AS subscriptionStatus, COALESCE(p.id, '') AS planId, COALESCE(p.name, 'Sin plan') AS planName, COALESCE(s.current_period_end, '') AS periodEnd, (SELECT COUNT(*) FROM memberships m WHERE m.clinic_id = c.id AND m.status = 'active') AS users, (SELECT COUNT(*) FROM conversations cv WHERE cv.clinic_id = c.id) AS conversations, COALESCE((SELECT SUM(quantity) FROM usage_events u WHERE u.clinic_id = c.id AND u.metric = 'ai_request'), 0) AS aiRequests, COALESCE((SELECT status FROM integration_connections ic WHERE ic.clinic_id = c.id AND ic.provider = 'whatsapp'), 'pending') AS whatsappStatus, c.created_at AS createdAt FROM clinics c LEFT JOIN organization_profiles op ON op.clinic_id = c.id LEFT JOIN organization_states os ON os.clinic_id = c.id LEFT JOIN subscriptions s ON s.clinic_id = c.id LEFT JOIN subscription_plans p ON p.id = s.plan_id ORDER BY c.created_at DESC`,

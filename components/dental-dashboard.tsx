@@ -1,6 +1,7 @@
 'use client';
 
 import { type SyntheticEvent, useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Activity,
@@ -12,6 +13,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  CreditCard,
   FileText,
   MessageCircle,
   Megaphone,
@@ -35,7 +37,6 @@ import {
   anonymizePatient,
   createAppointment,
   createLocation,
-  createOrganization,
   createProfessional,
   createService,
   inviteMember,
@@ -108,8 +109,11 @@ type View =
   | 'inbox'
   | 'patients'
   | 'services'
+  | 'branches'
+  | 'team'
   | 'automation'
   | 'analytics'
+  | 'plan'
   | 'settings'
   | 'platform';
 
@@ -122,8 +126,11 @@ const navigation: Array<{
   { id: 'inbox', label: 'Bandeja', icon: MessageCircle },
   { id: 'patients', label: 'Pacientes', icon: Users },
   { id: 'services', label: 'Servicios', icon: Stethoscope },
+  { id: 'branches', label: 'Sucursales', icon: Building2 },
+  { id: 'team', label: 'Equipo', icon: UserPlus },
   { id: 'automation', label: 'Automatización', icon: Zap },
   { id: 'analytics', label: 'Analítica', icon: BarChart3 },
+  { id: 'plan', label: 'Mi plan', icon: CreditCard },
   { id: 'settings', label: 'Configuración', icon: Settings2 },
   { id: 'platform', label: 'Plataforma', icon: Building2 },
 ];
@@ -141,7 +148,6 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
   const [view, setView] = useState<View>('agenda');
   const [appointmentOpen, setAppointmentOpen] = useState(false);
   const [serviceOpen, setServiceOpen] = useState(false);
-  const [organizationOpen, setOrganizationOpen] = useState(false);
   const [notice, setNotice] = useState<ActionResult | null>(null);
   const [isPending, startTransition] = useTransition();
   const unread = data.conversations.reduce(
@@ -187,7 +193,11 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setView(item.id)}
+                    onClick={() =>
+                      item.id === 'platform'
+                        ? router.push('/platform')
+                        : setView(item.id)
+                    }
                     className={`flex h-10 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'}`}
                   >
                     <Icon className="size-[18px]" />
@@ -227,17 +237,6 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            {data.saas.isPlatformAdmin ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start"
-                onClick={() => setOrganizationOpen(true)}
-              >
-                <Plus data-icon="inline-start" />
-                Nuevo negocio
-              </Button>
-            ) : null}
           </div>
           <div className="mt-auto space-y-3">
             <Card className="border-0 bg-[#ecf8f4] shadow-none ring-0">
@@ -314,16 +313,6 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                   <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-[#ef715f]" />
                 ) : null}
               </Button>
-              {data.saas.isPlatformAdmin ? (
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="Crear otro negocio"
-                  onClick={() => setOrganizationOpen(true)}
-                >
-                  <Building2 />
-                </Button>
-              ) : null}
               <Button
                 size="lg"
                 className="ml-1 rounded-xl px-4 shadow-sm"
@@ -368,7 +357,22 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                 canManage={canManage}
               />
             ) : null}
+            {view === 'branches' ? (
+              <BranchesView
+                data={data}
+                runAction={runAction}
+                isPending={isPending}
+              />
+            ) : null}
+            {view === 'team' ? (
+              <TeamView
+                data={data}
+                runAction={runAction}
+                isPending={isPending}
+              />
+            ) : null}
             {view === 'analytics' ? <AnalyticsView data={data} /> : null}
+            {view === 'plan' ? <PlanView data={data} /> : null}
             {view === 'automation' ? (
               <CommercialView
                 data={data}
@@ -405,19 +409,26 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
         isPending={isPending}
         clinicId={data.clinic.id}
       />
-      {data.saas.isPlatformAdmin ? (
-        <NewOrganizationDialog
-          open={organizationOpen}
-          setOpen={setOrganizationOpen}
-          runAction={runAction}
-          isPending={isPending}
-        />
-      ) : null}
       {notice ? (
         <output
           className={`fixed bottom-20 right-4 z-[80] max-w-sm rounded-xl border px-4 py-3 text-sm shadow-xl lg:bottom-5 ${notice.ok ? 'border-[#bfe8dc] bg-[#effaf7] text-[#176d59]' : 'border-red-200 bg-red-50 text-red-700'}`}
         >
-          {notice.message}
+          <span>{notice.message}</span>
+          {notice.invitationPath ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="ml-3 bg-white"
+              onClick={() =>
+                navigator.clipboard.writeText(
+                  new URL(notice.invitationPath!, window.location.origin).toString(),
+                )
+              }
+            >
+              Copiar enlace
+            </Button>
+          ) : null}
         </output>
       ) : null}
     </main>
@@ -1885,6 +1896,332 @@ function AutomationItem({
   );
 }
 
+function BranchesView({
+  data,
+  runAction,
+  isPending,
+}: {
+  data: DashboardData;
+  runAction: (operation: () => Promise<ActionResult>) => void;
+  isPending: boolean;
+}) {
+  const canManage =
+    data.saas.isPlatformAdmin ||
+    ['owner', 'admin'].includes(data.saas.activeOrganization?.role ?? '');
+  const limit = data.saas.subscription?.plan.maxLocations ?? 0;
+
+  function locationSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      createLocation({
+        clinicId: data.clinic.id,
+        name: formText(form, 'name'),
+        address: formText(form, 'address'),
+        phone: formText(form, 'phone'),
+      }),
+    );
+  }
+
+  function professionalSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      createProfessional({
+        clinicId: data.clinic.id,
+        name: formText(form, 'name'),
+        email: formText(form, 'email'),
+        specialty: formText(form, 'specialty'),
+        locationId: formText(form, 'locationId'),
+      }),
+    );
+  }
+
+  return (
+    <>
+      <PageHeading
+        eyebrow="Establecimientos"
+        title="Sucursales"
+        description="Administra las sedes físicas incluidas en el plan de este negocio."
+      />
+      <div className="grid gap-5 xl:grid-cols-[1fr_0.9fr]">
+        <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+          <CardHeader>
+            <CardTitle>Sucursales activas</CardTitle>
+            <CardDescription>
+              {data.locations.length} de {limit || '—'} disponibles en el plan
+              actual.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {data.locations.map((location) => (
+              <div
+                key={location.id}
+                className="flex items-center gap-3 rounded-xl border p-4"
+              >
+                <div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+                  <Building2 className="size-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">{location.name}</p>
+                  <p className="truncate text-sm text-muted-foreground">
+                    {location.address ?? 'Dirección pendiente'}
+                  </p>
+                </div>
+                <Badge variant="outline">Activa</Badge>
+              </div>
+            ))}
+            {canManage ? (
+              <form onSubmit={locationSubmit} className="grid gap-3 border-t pt-5 sm:grid-cols-2">
+                <Input name="name" placeholder="Nombre de la sucursal" required />
+                <Input name="phone" placeholder="Teléfono" />
+                <Input name="address" placeholder="Dirección" className="sm:col-span-2" />
+                <Button type="submit" disabled={isPending} className="sm:col-span-2">
+                  Agregar sucursal
+                </Button>
+              </form>
+            ) : null}
+          </CardContent>
+        </Card>
+        <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+          <CardHeader>
+            <CardTitle>Profesionales</CardTitle>
+            <CardDescription>
+              Asigna a cada profesional una sede de trabajo.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {data.doctors.map((doctor) => (
+              <div key={doctor.id} className="rounded-xl border p-3">
+                <p className="text-sm font-semibold">{doctor.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {doctor.specialty ?? 'Sin especialidad'}
+                </p>
+              </div>
+            ))}
+            {canManage ? (
+              <form onSubmit={professionalSubmit} className="grid gap-3 border-t pt-5">
+                <Input name="name" placeholder="Nombre del profesional" required />
+                <Input name="specialty" placeholder="Especialidad o función" />
+                <Input name="email" type="email" placeholder="Correo" />
+                <NativeSelect name="locationId" className="w-full">
+                  <NativeSelectOption value="">Sin sede fija</NativeSelectOption>
+                  {data.locations.map((location) => (
+                    <NativeSelectOption key={location.id} value={location.id}>
+                      {location.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                <Button type="submit" variant="outline" disabled={isPending}>
+                  Agregar profesional
+                </Button>
+              </form>
+            ) : null}
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  );
+}
+
+function TeamView({
+  data,
+  runAction,
+  isPending,
+}: {
+  data: DashboardData;
+  runAction: (operation: () => Promise<ActionResult>) => void;
+  isPending: boolean;
+}) {
+  const canManage =
+    data.saas.isPlatformAdmin ||
+    ['owner', 'admin'].includes(data.saas.activeOrganization?.role ?? '');
+
+  function inviteSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      inviteMember({
+        clinicId: data.clinic.id,
+        email: formText(form, 'email'),
+        role: formText(form, 'role') as 'owner' | 'admin' | 'staff' | 'viewer',
+      }),
+    );
+  }
+
+  return (
+    <>
+      <PageHeading
+        eyebrow="Accesos del negocio"
+        title="Equipo y permisos"
+        description="Invita personas y define lo que cada una puede hacer dentro de este negocio."
+      />
+      <Card className="max-w-4xl border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+        <CardContent className="space-y-3 pt-6">
+          {data.saas.members.map((member) => (
+            <div key={member.id} className="flex items-center gap-3 rounded-xl border p-4">
+              <div className="grid size-10 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                {initials(member.fullName ?? member.email)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">
+                  {member.fullName ?? member.email}
+                </p>
+                <p className="truncate text-xs text-muted-foreground">{member.email}</p>
+              </div>
+              <Badge variant="outline">{roleLabel(member.role)}</Badge>
+            </div>
+          ))}
+          {canManage ? (
+            <form onSubmit={inviteSubmit} className="grid gap-3 border-t pt-5 sm:grid-cols-[1fr_150px_auto]">
+              <Input name="email" type="email" placeholder="persona@negocio.com" required />
+              <NativeSelect name="role" defaultValue="staff">
+                {data.saas.isPlatformAdmin ? (
+                  <NativeSelectOption value="owner">Propietario</NativeSelectOption>
+                ) : null}
+                <NativeSelectOption value="admin">Administrador</NativeSelectOption>
+                <NativeSelectOption value="staff">Personal</NativeSelectOption>
+                <NativeSelectOption value="viewer">Solo lectura</NativeSelectOption>
+              </NativeSelect>
+              <Button type="submit" disabled={isPending}>
+                <UserPlus data-icon="inline-start" />
+                Invitar
+              </Button>
+            </form>
+          ) : null}
+          {data.saas.invitations
+            .filter((invitation) => invitation.status === 'pending')
+            .map((invitation) => (
+              <div key={invitation.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed p-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{invitation.email}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {roleLabel(invitation.role)} · vence {formatDate(invitation.expiresAt)}
+                  </p>
+                </div>
+                {canManage ? (
+                  <>
+                    <Button size="sm" variant="outline" disabled={isPending} onClick={() => runAction(() => resendInvitation(invitation.id))}>
+                      Reenviar
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled={isPending} onClick={() => runAction(() => revokeInvitation(invitation.id))}>
+                      Revocar
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            ))}
+          {!data.integration.invitationEmailReady ? (
+            <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">
+              El correo automático aún no está configurado. Las invitaciones
+              creadas desde administración pueden copiarse y enviarse manualmente.
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function PlanView({ data }: { data: DashboardData }) {
+  const subscription = data.saas.subscription;
+  return (
+    <>
+      <PageHeading
+        eyebrow="Suscripción del negocio"
+        title="Mi plan"
+        description="Consulta tus límites, consumo y capacidad para agregar usuarios o sucursales."
+      />
+      {subscription ? (
+        <div className="grid gap-5 xl:grid-cols-[1fr_1.1fr]">
+          <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+            <CardHeader>
+              <CardTitle>{subscription.plan.name}</CardTitle>
+              <CardDescription>
+                {subscription.plan.description ?? 'Suscripción del negocio'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid grid-cols-2 gap-3">
+                <PlanLimit
+                  label="Sucursales"
+                  current={data.locations.length}
+                  limit={subscription.plan.maxLocations}
+                />
+                <PlanLimit
+                  label="Usuarios"
+                  current={data.saas.members.length}
+                  limit={subscription.plan.maxUsers}
+                />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {subscription.status === 'trialing'
+                  ? `Periodo de prueba hasta ${formatDate(subscription.trialEndsAt ?? subscription.currentPeriodEnd)}.`
+                  : `Vigencia hasta ${formatDate(subscription.currentPeriodEnd)}.`}
+              </p>
+              <Link href="/planes">
+                <Button variant="outline">Comparar todos los planes</Button>
+              </Link>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+            <CardHeader>
+              <CardTitle>Consumo del periodo</CardTitle>
+              <CardDescription>
+                Se mide de forma independiente para este negocio.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <UsageBar
+                label="Conversaciones"
+                value={data.saas.usage.conversations}
+                limit={subscription.plan.maxConversations}
+              />
+              <UsageBar
+                label="Solicitudes de IA"
+                value={data.saas.usage.aiRequests}
+                limit={subscription.plan.maxAiRequests}
+              />
+              <div className="rounded-xl bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">
+                Para cambiar de plan, solicita la modificación al administrador
+                de Asistente H. Los cobros externos de Meta se administran por
+                separado.
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <Card>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Este negocio todavía no tiene un plan asociado.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+    </>
+  );
+}
+
+function PlanLimit({
+  label,
+  current,
+  limit,
+}: {
+  label: string;
+  current: number;
+  limit: number;
+}) {
+  return (
+    <div className="rounded-xl bg-muted p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-heading text-2xl font-bold">
+        {current} / {limit}
+      </p>
+    </div>
+  );
+}
+
 function SettingsView({
   data,
   runAction,
@@ -3027,142 +3364,6 @@ function NewServiceDialog({
             </Button>
             <Button type="submit" disabled={isPending}>
               {isPending ? 'Guardando…' : 'Agregar servicio'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function NewOrganizationDialog({
-  open,
-  setOpen,
-  runAction,
-  isPending,
-}: {
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  runAction: (
-    operation: () => Promise<ActionResult>,
-    onSuccess?: () => void,
-  ) => void;
-  isPending: boolean;
-}) {
-  function submit(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    runAction(
-      () =>
-        createOrganization({
-          name: formText(form, 'name'),
-          businessType: formText(form, 'businessType'),
-          phone: formText(form, 'phone'),
-          address: formText(form, 'address'),
-          timezone: formText(form, 'timezone'),
-        }),
-      () => setOpen(false),
-    );
-  }
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Nuevo negocio</DialogTitle>
-          <DialogDescription>
-            Se creará un espacio aislado con prueba, agenda, equipo, horarios e
-            integraciones propias.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={submit}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="organization-name">Nombre</FieldLabel>
-              <Input
-                id="organization-name"
-                name="name"
-                required
-                placeholder="Nombre del negocio"
-              />
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel htmlFor="organization-type">Tipo</FieldLabel>
-                <NativeSelect
-                  id="organization-type"
-                  name="businessType"
-                  defaultValue="dental"
-                  className="w-full"
-                >
-                  <NativeSelectOption value="dental">
-                    Consultorio dental
-                  </NativeSelectOption>
-                  <NativeSelectOption value="medical">
-                    Consultorio médico
-                  </NativeSelectOption>
-                  <NativeSelectOption value="beauty">
-                    Belleza y bienestar
-                  </NativeSelectOption>
-                  <NativeSelectOption value="professional">
-                    Servicios profesionales
-                  </NativeSelectOption>
-                  <NativeSelectOption value="general">Otro</NativeSelectOption>
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="organization-phone">Teléfono</FieldLabel>
-                <Input
-                  id="organization-phone"
-                  name="phone"
-                  placeholder="+52 55…"
-                />
-              </Field>
-            </div>
-            <Field>
-              <FieldLabel htmlFor="organization-address">Dirección</FieldLabel>
-              <Input id="organization-address" name="address" />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="organization-timezone">
-                Zona horaria
-              </FieldLabel>
-              <NativeSelect
-                id="organization-timezone"
-                name="timezone"
-                defaultValue="America/Mexico_City"
-                className="w-full"
-              >
-                <NativeSelectOption value="America/Mexico_City">
-                  Ciudad de México
-                </NativeSelectOption>
-                <NativeSelectOption value="America/Cancun">
-                  Cancún
-                </NativeSelectOption>
-                <NativeSelectOption value="America/Monterrey">
-                  Monterrey
-                </NativeSelectOption>
-                <NativeSelectOption value="America/Tijuana">
-                  Tijuana
-                </NativeSelectOption>
-                <NativeSelectOption value="America/Bogota">
-                  Bogotá
-                </NativeSelectOption>
-                <NativeSelectOption value="America/Lima">
-                  Lima
-                </NativeSelectOption>
-              </NativeSelect>
-            </Field>
-          </FieldGroup>
-          <DialogFooter className="mt-5">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-            >
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={isPending}>
-              {isPending ? 'Creando…' : 'Crear negocio'}
             </Button>
           </DialogFooter>
         </form>

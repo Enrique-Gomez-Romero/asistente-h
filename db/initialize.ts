@@ -583,13 +583,16 @@ async function seedSaasData(d1: typeof env.DB): Promise<void> {
 
   const statements = [
     d1.prepare(
-      `INSERT OR IGNORE INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_trial', 'trial', 'Prueba', 'Plan de evaluación para validar la operación.', 0, 3, 1, 300, 500, 1)`,
+      `INSERT INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_trial', 'trial', 'Prueba', '14 días para validar la operación con una sucursal.', 0, 3, 1, 300, 500, 1) ON CONFLICT(id) DO UPDATE SET slug = excluded.slug, name = excluded.name, description = excluded.description, price_cents = excluded.price_cents, max_users = excluded.max_users, max_locations = excluded.max_locations, max_conversations = excluded.max_conversations, max_ai_requests = excluded.max_ai_requests, active = excluded.active`,
     ),
     d1.prepare(
-      `INSERT OR IGNORE INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_professional', 'professional', 'Profesional', 'Para negocios con un equipo y automatización continua.', NULL, 10, 3, 3000, 5000, 1)`,
+      `INSERT INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_basic', 'basic', 'Básico', 'Para un establecimiento que comienza a automatizar su atención.', 69900, 3, 1, 500, 1000, 1) ON CONFLICT(id) DO UPDATE SET slug = excluded.slug, name = excluded.name, description = excluded.description, price_cents = excluded.price_cents, max_users = excluded.max_users, max_locations = excluded.max_locations, max_conversations = excluded.max_conversations, max_ai_requests = excluded.max_ai_requests, active = excluded.active`,
     ),
     d1.prepare(
-      `INSERT OR IGNORE INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_scale', 'scale', 'Escala', 'Para varias sedes, equipos y mayor volumen.', NULL, 50, 20, 25000, 50000, 1)`,
+      `INSERT INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_professional', 'professional', 'Profesional', 'Para equipos con hasta tres sucursales y automatización continua.', 149900, 10, 3, 3000, 5000, 1) ON CONFLICT(id) DO UPDATE SET slug = excluded.slug, name = excluded.name, description = excluded.description, price_cents = excluded.price_cents, max_users = excluded.max_users, max_locations = excluded.max_locations, max_conversations = excluded.max_conversations, max_ai_requests = excluded.max_ai_requests, active = excluded.active`,
+    ),
+    d1.prepare(
+      `INSERT INTO subscription_plans (id, slug, name, description, price_cents, max_users, max_locations, max_conversations, max_ai_requests, active) VALUES ('plan_scale', 'scale', 'Multi-sucursal', 'Para redes con varias sedes, equipos y mayor volumen.', 349900, 50, 20, 25000, 50000, 1) ON CONFLICT(id) DO UPDATE SET slug = excluded.slug, name = excluded.name, description = excluded.description, price_cents = excluded.price_cents, max_users = excluded.max_users, max_locations = excluded.max_locations, max_conversations = excluded.max_conversations, max_ai_requests = excluded.max_ai_requests, active = excluded.active`,
     ),
   ];
 

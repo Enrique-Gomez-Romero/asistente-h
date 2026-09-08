@@ -1,4 +1,5 @@
 import { requireAuthenticatedUser } from '@/lib/auth';
+import { redirect } from 'next/navigation';
 import { DentalDashboard } from '@/components/dental-dashboard';
 import { OrganizationOnboarding } from '@/components/organization-onboarding';
 import { getDashboardData } from '@/lib/dental-data';
@@ -14,11 +15,13 @@ export default async function CustomerApp({
   const user = await requireAuthenticatedUser('/app');
   const params = await searchParams;
   const saas = await getSaasContext(user, params.organization);
+  if (!saas.activeOrganization && saas.isPlatformAdmin)
+    redirect('/platform/negocios/nuevo');
   if (!saas.activeOrganization)
     return (
       <OrganizationOnboarding
         displayName={user.displayName}
-        canCreateOrganization={saas.isPlatformAdmin}
+        canCreateOrganization={false}
       />
     );
   const data = await getDashboardData(saas.activeOrganization.id, saas);
