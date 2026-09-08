@@ -10,7 +10,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-import { createOrganization, type ActionResult } from '@/app/actions';
+import type { ActionResult } from '@/app/actions';
+import { callAppAction } from '@/components/app-action-client';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -41,13 +42,15 @@ export function OrganizationOnboarding({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     startTransition(async () => {
-      const response = await createOrganization({
-        name: text(form, 'name'),
-        businessType: text(form, 'businessType'),
-        phone: text(form, 'phone'),
-        address: text(form, 'address'),
-        timezone: text(form, 'timezone'),
-      });
+      const response = await callAppAction<ActionResult>('createOrganization', [
+        {
+          name: text(form, 'name'),
+          businessType: text(form, 'businessType'),
+          phone: text(form, 'phone'),
+          address: text(form, 'address'),
+          timezone: text(form, 'timezone'),
+        },
+      ]);
       setResult(response);
       if (response.ok && response.organizationId)
         router.push(
@@ -231,9 +234,7 @@ export function OrganizationOnboarding({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() =>
-                  window.location.assign('/logout')
-                }
+                onClick={() => window.location.assign('/logout')}
               >
                 <LogOut data-icon="inline-start" /> Cambiar de cuenta
               </Button>

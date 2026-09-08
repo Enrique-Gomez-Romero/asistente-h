@@ -4,7 +4,8 @@ import { type SyntheticEvent, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Check, Clipboard, Plus } from 'lucide-react';
 
-import { createOrganization, type ActionResult } from '@/app/actions';
+import type { ActionResult } from '@/app/actions';
+import { callAppAction } from '@/components/app-action-client';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Card,
@@ -31,15 +32,21 @@ export function NewBusinessForm({ plans }: { plans: ActivePlan[] }) {
     const form = new FormData(event.currentTarget);
     setCopied(false);
     startTransition(async () => {
-      const response = await createOrganization({
-        name: value(form, 'name'),
-        businessType: value(form, 'businessType'),
-        planId: value(form, 'planId'),
-        ownerEmail: value(form, 'ownerEmail'),
-        phone: value(form, 'phone'),
-        address: value(form, 'address'),
-        timezone: value(form, 'timezone'),
-      });
+      const response = await callAppAction<ActionResult>(
+        'createOrganization',
+        [
+          {
+            name: value(form, 'name'),
+            businessType: value(form, 'businessType'),
+            planId: value(form, 'planId'),
+            ownerEmail: value(form, 'ownerEmail'),
+            phone: value(form, 'phone'),
+            address: value(form, 'address'),
+            timezone: value(form, 'timezone'),
+          },
+        ],
+        '/platform',
+      );
       setResult(response);
     });
   }
@@ -120,7 +127,9 @@ export function NewBusinessForm({ plans }: { plans: ActivePlan[] }) {
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="business-plan">Plan inicial</FieldLabel>
+                    <FieldLabel htmlFor="business-plan">
+                      Plan inicial
+                    </FieldLabel>
                     <NativeSelect
                       id="business-plan"
                       name="planId"

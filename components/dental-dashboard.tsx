@@ -34,35 +34,37 @@ import {
 } from 'lucide-react';
 
 import {
-  anonymizePatient,
-  createAppointment,
-  createLocation,
-  createProfessional,
-  createService,
-  disconnectGoogleCalendar,
-  inviteMember,
-  markConversationRead,
-  resendInvitation,
-  revokeInvitation,
-  sendConversationMessage,
-  setAppointmentStatus,
-  toggleBotPaused,
-  toggleService,
-  updateBusinessHours,
-  updateMemberLocations,
-  updateOrganizationProfile,
-  updatePatientConsent,
+  anonymizePatient as serverAnonymizePatient,
+  createAppointment as serverCreateAppointment,
+  createLocation as serverCreateLocation,
+  createProfessional as serverCreateProfessional,
+  createService as serverCreateService,
+  disconnectGoogleCalendar as serverDisconnectGoogleCalendar,
+  inviteMember as serverInviteMember,
+  markConversationRead as serverMarkConversationRead,
+  resendInvitation as serverResendInvitation,
+  revokeInvitation as serverRevokeInvitation,
+  sendConversationMessage as serverSendConversationMessage,
+  setAppointmentStatus as serverSetAppointmentStatus,
+  toggleBotPaused as serverToggleBotPaused,
+  toggleService as serverToggleService,
+  updateBusinessHours as serverUpdateBusinessHours,
+  updateLocation as serverUpdateLocation,
+  updateMemberLocations as serverUpdateMemberLocations,
+  updateOrganizationProfile as serverUpdateOrganizationProfile,
+  updatePatientConsent as serverUpdatePatientConsent,
   type ActionResult,
 } from '@/app/actions';
 import {
-  addWaitlistEntry,
-  createReactivationCampaign,
-  requestAppointmentDeposit,
-  runAutomationsNow,
-  setWaitlistStatus,
-  updateAutomationRule,
-  verifyAppointmentDeposit,
+  addWaitlistEntry as serverAddWaitlistEntry,
+  createReactivationCampaign as serverCreateReactivationCampaign,
+  requestAppointmentDeposit as serverRequestAppointmentDeposit,
+  runAutomationsNow as serverRunAutomationsNow,
+  setWaitlistStatus as serverSetWaitlistStatus,
+  updateAutomationRule as serverUpdateAutomationRule,
+  verifyAppointmentDeposit as serverVerifyAppointmentDeposit,
 } from '@/app/commercial-actions';
+import { callAppAction } from '@/components/app-action-client';
 import { MetaEmbeddedSignup } from '@/components/meta-embedded-signup';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -120,6 +122,75 @@ type View =
   | 'settings'
   | 'platform';
 
+const anonymizePatient = (...args: Parameters<typeof serverAnonymizePatient>) =>
+  callAppAction<ActionResult>('anonymizePatient', args);
+const createAppointment = (
+  ...args: Parameters<typeof serverCreateAppointment>
+) => callAppAction<ActionResult>('createAppointment', args);
+const createLocation = (...args: Parameters<typeof serverCreateLocation>) =>
+  callAppAction<ActionResult>('createLocation', args);
+const createProfessional = (
+  ...args: Parameters<typeof serverCreateProfessional>
+) => callAppAction<ActionResult>('createProfessional', args);
+const createService = (...args: Parameters<typeof serverCreateService>) =>
+  callAppAction<ActionResult>('createService', args);
+const disconnectGoogleCalendar = (
+  ...args: Parameters<typeof serverDisconnectGoogleCalendar>
+) => callAppAction<ActionResult>('disconnectGoogleCalendar', args);
+const inviteMember = (...args: Parameters<typeof serverInviteMember>) =>
+  callAppAction<ActionResult>('inviteMember', args);
+const markConversationRead = (
+  ...args: Parameters<typeof serverMarkConversationRead>
+) => callAppAction<ActionResult>('markConversationRead', args);
+const resendInvitation = (...args: Parameters<typeof serverResendInvitation>) =>
+  callAppAction<ActionResult>('resendInvitation', args);
+const revokeInvitation = (...args: Parameters<typeof serverRevokeInvitation>) =>
+  callAppAction<ActionResult>('revokeInvitation', args);
+const sendConversationMessage = (
+  ...args: Parameters<typeof serverSendConversationMessage>
+) => callAppAction<ActionResult>('sendConversationMessage', args);
+const setAppointmentStatus = (
+  ...args: Parameters<typeof serverSetAppointmentStatus>
+) => callAppAction<ActionResult>('setAppointmentStatus', args);
+const toggleBotPaused = (...args: Parameters<typeof serverToggleBotPaused>) =>
+  callAppAction<ActionResult>('toggleBotPaused', args);
+const toggleService = (...args: Parameters<typeof serverToggleService>) =>
+  callAppAction<ActionResult>('toggleService', args);
+const updateBusinessHours = (
+  ...args: Parameters<typeof serverUpdateBusinessHours>
+) => callAppAction<ActionResult>('updateBusinessHours', args);
+const updateLocation = (...args: Parameters<typeof serverUpdateLocation>) =>
+  callAppAction<ActionResult>('updateLocation', args);
+const updateMemberLocations = (
+  ...args: Parameters<typeof serverUpdateMemberLocations>
+) => callAppAction<ActionResult>('updateMemberLocations', args);
+const updateOrganizationProfile = (
+  ...args: Parameters<typeof serverUpdateOrganizationProfile>
+) => callAppAction<ActionResult>('updateOrganizationProfile', args);
+const updatePatientConsent = (
+  ...args: Parameters<typeof serverUpdatePatientConsent>
+) => callAppAction<ActionResult>('updatePatientConsent', args);
+const addWaitlistEntry = (...args: Parameters<typeof serverAddWaitlistEntry>) =>
+  callAppAction<ActionResult>('addWaitlistEntry', args);
+const createReactivationCampaign = (
+  ...args: Parameters<typeof serverCreateReactivationCampaign>
+) => callAppAction<ActionResult>('createReactivationCampaign', args);
+const requestAppointmentDeposit = (
+  ...args: Parameters<typeof serverRequestAppointmentDeposit>
+) => callAppAction<ActionResult>('requestAppointmentDeposit', args);
+const runAutomationsNow = (
+  ...args: Parameters<typeof serverRunAutomationsNow>
+) => callAppAction<ActionResult>('runAutomationsNow', args);
+const setWaitlistStatus = (
+  ...args: Parameters<typeof serverSetWaitlistStatus>
+) => callAppAction<ActionResult>('setWaitlistStatus', args);
+const updateAutomationRule = (
+  ...args: Parameters<typeof serverUpdateAutomationRule>
+) => callAppAction<ActionResult>('updateAutomationRule', args);
+const verifyAppointmentDeposit = (
+  ...args: Parameters<typeof serverVerifyAppointmentDeposit>
+) => callAppAction<ActionResult>('verifyAppointmentDeposit', args);
+
 const navigation: Array<{
   id: View;
   label: string;
@@ -165,7 +236,7 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
         currentMember?.locationIds.includes(location.id),
       );
   const [selectedLocationId, setSelectedLocationId] = useState(
-    canSeeAllLocations ? 'all' : availableLocations[0]?.id ?? 'all',
+    canSeeAllLocations ? 'all' : (availableLocations[0]?.id ?? 'all'),
   );
   const scopedData =
     selectedLocationId === 'all'
@@ -338,7 +409,9 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
               className="max-w-[210px]"
             >
               {canSeeAllLocations ? (
-                <NativeSelectOption value="all">Todas las sucursales</NativeSelectOption>
+                <NativeSelectOption value="all">
+                  Todas las sucursales
+                </NativeSelectOption>
               ) : null}
               {availableLocations.map((location) => (
                 <NativeSelectOption key={location.id} value={location.id}>
@@ -478,7 +551,10 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
               className="ml-3 bg-white"
               onClick={() =>
                 navigator.clipboard.writeText(
-                  new URL(notice.invitationPath!, window.location.origin).toString(),
+                  new URL(
+                    notice.invitationPath!,
+                    window.location.origin,
+                  ).toString(),
                 )
               }
             >
@@ -2011,28 +2087,87 @@ function BranchesView({
           </CardHeader>
           <CardContent className="space-y-3">
             {data.locations.map((location) => (
-              <div
-                key={location.id}
-                className="flex items-center gap-3 rounded-xl border p-4"
-              >
-                <div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
-                  <Building2 className="size-5" />
+              <div key={location.id} className="rounded-xl border p-4">
+                <div className="flex items-center gap-3">
+                  <div className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+                    <Building2 className="size-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold">{location.name}</p>
+                    <p className="truncate text-sm text-muted-foreground">
+                      {location.address ?? 'Dirección pendiente'}
+                    </p>
+                  </div>
+                  <Badge variant="outline">Activa</Badge>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold">{location.name}</p>
-                  <p className="truncate text-sm text-muted-foreground">
-                    {location.address ?? 'Dirección pendiente'}
-                  </p>
-                </div>
-                <Badge variant="outline">Activa</Badge>
+                {canManage ? (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const form = new FormData(event.currentTarget);
+                      runAction(() =>
+                        updateLocation({
+                          clinicId: data.clinic.id,
+                          locationId: location.id,
+                          name: formText(form, 'name'),
+                          address: formText(form, 'address'),
+                          phone: formText(form, 'phone'),
+                        }),
+                      );
+                    }}
+                    className="mt-4 grid gap-2 border-t pt-4 sm:grid-cols-[1fr_1fr_1fr_auto]"
+                  >
+                    <Input
+                      name="name"
+                      defaultValue={location.name}
+                      aria-label="Nombre de la sucursal"
+                      required
+                    />
+                    <Input
+                      name="address"
+                      defaultValue={location.address ?? ''}
+                      placeholder="Dirección"
+                      aria-label="Dirección"
+                    />
+                    <Input
+                      name="phone"
+                      defaultValue={location.phone ?? ''}
+                      placeholder="Teléfono"
+                      aria-label="Teléfono"
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      variant="outline"
+                      disabled={isPending}
+                    >
+                      Guardar
+                    </Button>
+                  </form>
+                ) : null}
               </div>
             ))}
             {canManage ? (
-              <form onSubmit={locationSubmit} className="grid gap-3 border-t pt-5 sm:grid-cols-2">
-                <Input name="name" placeholder="Nombre de la sucursal" required />
+              <form
+                onSubmit={locationSubmit}
+                className="grid gap-3 border-t pt-5 sm:grid-cols-2"
+              >
+                <Input
+                  name="name"
+                  placeholder="Nombre de la sucursal"
+                  required
+                />
                 <Input name="phone" placeholder="Teléfono" />
-                <Input name="address" placeholder="Dirección" className="sm:col-span-2" />
-                <Button type="submit" disabled={isPending} className="sm:col-span-2">
+                <Input
+                  name="address"
+                  placeholder="Dirección"
+                  className="sm:col-span-2"
+                />
+                <Button
+                  type="submit"
+                  disabled={isPending}
+                  className="sm:col-span-2"
+                >
                   Agregar sucursal
                 </Button>
               </form>
@@ -2056,8 +2191,15 @@ function BranchesView({
               </div>
             ))}
             {canManage ? (
-              <form onSubmit={professionalSubmit} className="grid gap-3 border-t pt-5">
-                <Input name="name" placeholder="Nombre del profesional" required />
+              <form
+                onSubmit={professionalSubmit}
+                className="grid gap-3 border-t pt-5"
+              >
+                <Input
+                  name="name"
+                  placeholder="Nombre del profesional"
+                  required
+                />
                 <Input name="specialty" placeholder="Especialidad o función" />
                 <Input name="email" type="email" placeholder="Correo" />
                 <NativeSelect name="locationId" className="w-full" required>
@@ -2117,16 +2259,18 @@ function TeamView({
           {data.saas.members.map((member) => (
             <div key={member.id} className="rounded-xl border p-4">
               <div className="flex items-center gap-3">
-              <div className="grid size-10 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                {initials(member.fullName ?? member.email)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">
-                  {member.fullName ?? member.email}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">{member.email}</p>
-              </div>
-              <Badge variant="outline">{roleLabel(member.role)}</Badge>
+                <div className="grid size-10 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                  {initials(member.fullName ?? member.email)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">
+                    {member.fullName ?? member.email}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {member.email}
+                  </p>
+                </div>
+                <Badge variant="outline">{roleLabel(member.role)}</Badge>
               </div>
               <form
                 className="mt-3 flex flex-wrap items-center gap-3 border-t pt-3"
@@ -2143,7 +2287,10 @@ function TeamView({
                 }}
               >
                 {data.locations.map((location) => (
-                  <label key={location.id} className="flex items-center gap-2 text-xs">
+                  <label
+                    key={location.id}
+                    className="flex items-center gap-2 text-xs"
+                  >
                     <input
                       type="checkbox"
                       name="locationIds"
@@ -2156,7 +2303,12 @@ function TeamView({
                   </label>
                 ))}
                 {canManage ? (
-                  <Button type="submit" size="sm" variant="outline" disabled={isPending}>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="outline"
+                    disabled={isPending}
+                  >
                     Guardar sucursales
                   </Button>
                 ) : null}
@@ -2164,15 +2316,29 @@ function TeamView({
             </div>
           ))}
           {canManage ? (
-            <form onSubmit={inviteSubmit} className="grid gap-3 border-t pt-5 sm:grid-cols-[1fr_150px_auto]">
-              <Input name="email" type="email" placeholder="persona@negocio.com" required />
+            <form
+              onSubmit={inviteSubmit}
+              className="grid gap-3 border-t pt-5 sm:grid-cols-[1fr_150px_auto]"
+            >
+              <Input
+                name="email"
+                type="email"
+                placeholder="persona@negocio.com"
+                required
+              />
               <NativeSelect name="role" defaultValue="staff">
                 {data.saas.isPlatformAdmin ? (
-                  <NativeSelectOption value="owner">Propietario</NativeSelectOption>
+                  <NativeSelectOption value="owner">
+                    Propietario
+                  </NativeSelectOption>
                 ) : null}
-                <NativeSelectOption value="admin">Administrador</NativeSelectOption>
+                <NativeSelectOption value="admin">
+                  Administrador
+                </NativeSelectOption>
                 <NativeSelectOption value="staff">Personal</NativeSelectOption>
-                <NativeSelectOption value="viewer">Solo lectura</NativeSelectOption>
+                <NativeSelectOption value="viewer">
+                  Solo lectura
+                </NativeSelectOption>
               </NativeSelect>
               <Button type="submit" disabled={isPending}>
                 <UserPlus data-icon="inline-start" />
@@ -2183,7 +2349,10 @@ function TeamView({
                   Sucursales permitidas
                 </legend>
                 {data.locations.map((location) => (
-                  <label key={location.id} className="flex items-center gap-2 text-sm">
+                  <label
+                    key={location.id}
+                    className="flex items-center gap-2 text-sm"
+                  >
                     <input
                       type="checkbox"
                       name="locationIds"
@@ -2200,19 +2369,39 @@ function TeamView({
           {data.saas.invitations
             .filter((invitation) => invitation.status === 'pending')
             .map((invitation) => (
-              <div key={invitation.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed p-3">
+              <div
+                key={invitation.id}
+                className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed p-3"
+              >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{invitation.email}</p>
+                  <p className="truncate text-sm font-medium">
+                    {invitation.email}
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    {roleLabel(invitation.role)} · vence {formatDate(invitation.expiresAt)}
+                    {roleLabel(invitation.role)} · vence{' '}
+                    {formatDate(invitation.expiresAt)}
                   </p>
                 </div>
                 {canManage ? (
                   <>
-                    <Button size="sm" variant="outline" disabled={isPending} onClick={() => runAction(() => resendInvitation(invitation.id))}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isPending}
+                      onClick={() =>
+                        runAction(() => resendInvitation(invitation.id))
+                      }
+                    >
                       Reenviar
                     </Button>
-                    <Button size="sm" variant="ghost" disabled={isPending} onClick={() => runAction(() => revokeInvitation(invitation.id))}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={isPending}
+                      onClick={() =>
+                        runAction(() => revokeInvitation(invitation.id))
+                      }
+                    >
                       Revocar
                     </Button>
                   </>
@@ -2222,7 +2411,8 @@ function TeamView({
           {!data.integration.invitationEmailReady ? (
             <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">
               El correo automático aún no está configurado. Las invitaciones
-              creadas desde administración pueden copiarse y enviarse manualmente.
+              creadas desde administración pueden copiarse y enviarse
+              manualmente.
             </p>
           ) : null}
         </CardContent>
@@ -2364,11 +2554,15 @@ function IntegrationsView({
             (item) => item.provider === 'google_calendar',
           );
           return (
-            <Card key={location.id} className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+            <Card
+              key={location.id}
+              className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]"
+            >
               <CardHeader>
                 <CardTitle>{location.name}</CardTitle>
                 <CardDescription>
-                  {location.address ?? 'Dirección pendiente'} · {locationConnections.length} conexiones
+                  {location.address ?? 'Dirección pendiente'} ·{' '}
+                  {locationConnections.length} conexiones
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-5 xl:grid-cols-2">
@@ -2404,7 +2598,10 @@ function IntegrationsView({
                 <div className="space-y-3">
                   <p className="text-sm font-semibold">Calendarios de Google</p>
                   {googleConnections.map((connection) => (
-                    <div key={connection.id} className="flex items-center gap-3 rounded-xl border p-3">
+                    <div
+                      key={connection.id}
+                      className="flex items-center gap-3 rounded-xl border p-3"
+                    >
                       <CalendarDays className="size-4 text-primary" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">
@@ -2422,7 +2619,10 @@ function IntegrationsView({
                           disabled={isPending}
                           onClick={() =>
                             runAction(() =>
-                              disconnectGoogleCalendar(data.clinic.id, connection.id),
+                              disconnectGoogleCalendar(
+                                data.clinic.id,
+                                connection.id,
+                              ),
                             )
                           }
                         >
@@ -2432,11 +2632,33 @@ function IntegrationsView({
                     </div>
                   ))}
                   {canManage ? (
-                    <form action="/api/google-calendar/connect" method="get" className="grid gap-2 rounded-xl border p-3">
-                      <input type="hidden" name="clinicId" value={data.clinic.id} />
-                      <input type="hidden" name="locationId" value={location.id} />
-                      <Input name="label" defaultValue={`Agenda · ${location.name}`} aria-label="Nombre de la conexión" required />
-                      <Input name="calendarId" defaultValue="primary" aria-label="Identificador del calendario" required />
+                    <form
+                      action="/api/google-calendar/connect"
+                      method="get"
+                      className="grid gap-2 rounded-xl border p-3"
+                    >
+                      <input
+                        type="hidden"
+                        name="clinicId"
+                        value={data.clinic.id}
+                      />
+                      <input
+                        type="hidden"
+                        name="locationId"
+                        value={location.id}
+                      />
+                      <Input
+                        name="label"
+                        defaultValue={`Agenda · ${location.name}`}
+                        aria-label="Nombre de la conexión"
+                        required
+                      />
+                      <Input
+                        name="calendarId"
+                        defaultValue="primary"
+                        aria-label="Identificador del calendario"
+                        required
+                      />
                       <Button type="submit" variant="outline">
                         Conectar otro calendario
                       </Button>
@@ -3043,7 +3265,9 @@ function SettingsView({
                   locationName={data.locations[0]?.name ?? 'Sede principal'}
                   connectionId={
                     data.saas.integrations.find(
-                      (item) => item.provider === 'whatsapp' && item.status === 'connected',
+                      (item) =>
+                        item.provider === 'whatsapp' &&
+                        item.status === 'connected',
                     )?.id
                   }
                   appId={data.integration.metaEmbeddedSignup.appId}
@@ -3346,7 +3570,9 @@ function NewAppointmentDialog({
   isPending: boolean;
 }) {
   const [locationId, setLocationId] = useState(
-    selectedLocationId === 'all' ? data.locations[0]?.id ?? '' : selectedLocationId,
+    selectedLocationId === 'all'
+      ? (data.locations[0]?.id ?? '')
+      : selectedLocationId,
   );
   const availableDoctors = data.doctors.filter(
     (doctor) => doctor.active && doctor.locationIds.includes(locationId),
@@ -3385,7 +3611,9 @@ function NewAppointmentDialog({
           <FieldGroup>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>
-                <FieldLabel htmlFor="appointmentLocationId">Sucursal</FieldLabel>
+                <FieldLabel htmlFor="appointmentLocationId">
+                  Sucursal
+                </FieldLabel>
                 <NativeSelect
                   id="appointmentLocationId"
                   name="locationId"
@@ -3434,7 +3662,8 @@ function NewAppointmentDialog({
               />
               <span>
                 El paciente autorizó recibir recordatorios y mensajes por
-                WhatsApp. Registra esta opción sólo cuando exista consentimiento.
+                WhatsApp. Registra esta opción sólo cuando exista
+                consentimiento.
               </span>
             </label>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -3464,10 +3693,10 @@ function NewAppointmentDialog({
                   className="w-full"
                 >
                   {availableDoctors.map((doctor) => (
-                      <NativeSelectOption key={doctor.id} value={doctor.id}>
-                        {doctor.name}
-                      </NativeSelectOption>
-                    ))}
+                    <NativeSelectOption key={doctor.id} value={doctor.id}>
+                      {doctor.name}
+                    </NativeSelectOption>
+                  ))}
                 </NativeSelect>
               </Field>
             </div>
@@ -3503,7 +3732,8 @@ function NewAppointmentDialog({
               disabled={
                 isPending ||
                 !data.services.some((item) => item.active) ||
-                !availableDoctors.length || !locationId
+                !availableDoctors.length ||
+                !locationId
               }
             >
               {isPending ? 'Guardando…' : 'Crear cita'}

@@ -532,6 +532,10 @@ function OrganizationRow({
   pending: boolean;
   run: (operation: () => Promise<CommercialActionResult>) => void;
 }) {
+  const [name, setName] = useState(organization.name);
+  const [phone, setPhone] = useState(organization.phone ?? '');
+  const [address, setAddress] = useState(organization.address ?? '');
+  const [timezone, setTimezone] = useState(organization.timezone);
   const [planId, setPlanId] = useState(organization.planId);
   const [status, setStatus] = useState(
     organization.subscriptionStatus as
@@ -562,6 +566,73 @@ function OrganizationRow({
           >
             Abrir operación <ExternalLink className="size-3" />
           </a>
+          <form
+            className="mt-3 space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              run(() =>
+                runPlatformAdminAction('update-organization-profile', {
+                  clinicId: organization.id,
+                  name,
+                  phone,
+                  address,
+                  timezone,
+                }),
+              );
+            }}
+          >
+            <Input
+              aria-label={`Nombre de ${organization.name}`}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className="h-8 text-xs"
+            />
+            <Input
+              aria-label={`Teléfono de ${organization.name}`}
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              placeholder="Teléfono"
+              className="h-8 text-xs"
+            />
+            <Input
+              aria-label={`Dirección de ${organization.name}`}
+              value={address}
+              onChange={(event) => setAddress(event.target.value)}
+              placeholder="Dirección"
+              className="h-8 text-xs"
+            />
+            <NativeSelect
+              aria-label={`Zona horaria de ${organization.name}`}
+              value={timezone}
+              onChange={(event) => setTimezone(event.target.value)}
+              className="h-8 w-full text-xs"
+            >
+              <NativeSelectOption value="America/Mexico_City">
+                Ciudad de México
+              </NativeSelectOption>
+              <NativeSelectOption value="America/Cancun">
+                Cancún
+              </NativeSelectOption>
+              <NativeSelectOption value="America/Monterrey">
+                Monterrey
+              </NativeSelectOption>
+              <NativeSelectOption value="America/Tijuana">
+                Tijuana
+              </NativeSelectOption>
+              <NativeSelectOption value="America/Bogota">
+                Bogotá
+              </NativeSelectOption>
+              <NativeSelectOption value="America/Lima">Lima</NativeSelectOption>
+            </NativeSelect>
+            <Button
+              type="submit"
+              size="sm"
+              variant="outline"
+              disabled={pending}
+            >
+              Guardar datos
+            </Button>
+          </form>
         </div>
       </TableCell>
       <TableCell>
@@ -785,6 +856,7 @@ async function runPlatformAdminAction(
   action:
     | 'update-subscription'
     | 'set-organization-status'
+    | 'update-organization-profile'
     | 'record-payment'
     | 'update-payment-status',
   input: Record<string, unknown>,

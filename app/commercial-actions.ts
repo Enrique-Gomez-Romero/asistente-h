@@ -130,6 +130,57 @@ export async function adminSetOrganizationStatus(input: {
   });
 }
 
+export async function adminUpdateOrganizationProfile(input: {
+  clinicId: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  timezone: string;
+}): Promise<CommercialActionResult> {
+  return commercialAction(async () => {
+    const user = await requirePlatformAdmin();
+    const name = input.name.trim();
+    if (name.length < 3)
+      throw new Error('Escribe un nombre válido para el negocio.');
+    const clinic = await env.DB.prepare('SELECT id FROM clinics WHERE id = ?')
+      .bind(input.clinicId)
+      .first();
+    if (!clinic) throw new Error('No se encontró el negocio.');
+    const now = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE clinics SET name = ?, phone = ?, address = ?, timezone = ? WHERE id = ?`,
+      ).bind(
+        name,
+        input.phone?.trim() || null,
+        input.address?.trim() || null,
+        input.timezone,
+        input.clinicId,
+      ),
+      env.DB.prepare(
+        `UPDATE locations SET address = ?, phone = ?, timezone = ? WHERE clinic_id = ? AND active = 1`,
+      ).bind(
+        input.address?.trim() || null,
+        input.phone?.trim() || null,
+        input.timezone,
+        input.clinicId,
+      ),
+      env.DB.prepare(
+        `INSERT INTO audit_logs (id, clinic_id, actor, action, entity_type, entity_id, details, created_at) VALUES (?, ?, ?, 'update', 'organization', ?, ?, ?)`,
+      ).bind(
+        `audit_${crypto.randomUUID()}`,
+        input.clinicId,
+        user.email,
+        input.clinicId,
+        JSON.stringify({ name }),
+        now,
+      ),
+    ]);
+    refreshCommercialViews();
+    return { ok: true, message: 'Datos del negocio actualizados.' };
+  });
+}
+
 export async function adminRecordManualPayment(input: {
   clinicId: string;
   amountPesos: number;
@@ -178,7 +229,11 @@ export async function adminRecordManualPayment(input: {
       env.DB.prepare(
         `UPDATE subscriptions SET status = ?, current_period_start = CASE WHEN ? = 'paid' THEN ? ELSE current_period_start END, current_period_end = CASE WHEN ? = 'paid' THEN ? ELSE current_period_end END, updated_at = ? WHERE clinic_id = ?`,
       ).bind(
-        input.status === 'paid' ? 'active' : input.status === 'pending' ? 'past_due' : 'past_due',
+        input.status === 'paid'
+          ? 'active'
+          : input.status === 'pending'
+            ? 'past_due'
+            : 'past_due',
         input.status,
         start.toISOString(),
         input.status,
@@ -207,7 +262,10 @@ export async function adminRecordManualPayment(input: {
         .run();
     }
     await notifySubscriptionOwner(input.clinicId, {
-      subject: input.status === 'paid' ? 'Pago confirmado' : 'Estado de transferencia actualizado',
+      subject:
+        input.status === 'paid'
+          ? 'Pago confirmado'
+          : 'Estado de transferencia actualizado',
       message:
         input.status === 'paid'
           ? `Confirmamos tu transferencia por $${input.amountPesos.toLocaleString('es-MX')} MXN. Tu servicio está vigente hasta ${end.toLocaleDateString('es-MX')}.`
@@ -234,7 +292,12 @@ export async function adminUpdateManualPaymentStatus(input: {
       `SELECT clinic_id AS clinicId, amount_cents AS amountCents, period_start AS periodStart, period_end AS periodEnd FROM manual_payments WHERE id = ?`,
     )
       .bind(input.paymentId)
-      .first<{ clinicId: string; amountCents: number; periodStart: string; periodEnd: string }>();
+      .first<{
+        clinicId: string;
+        amountCents: number;
+        periodStart: string;
+        periodEnd: string;
+      }>();
     if (!payment) throw new Error('No se encontró la transferencia.');
     const now = new Date().toISOString();
     const subscriptionStatus = input.status === 'paid' ? 'active' : 'past_due';
@@ -659,7 +722,9 @@ async function notifySubscriptionOwner(
   });
 }
 
-function paymentStatusLabel(status: 'pending' | 'paid' | 'overdue' | 'suspended') {
+function paymentStatusLabel(
+  status: 'pending' | 'paid' | 'overdue' | 'suspended',
+) {
   return {
     pending: 'pendiente',
     paid: 'pagada',
@@ -668,7 +733,9 @@ function paymentStatusLabel(status: 'pending' | 'paid' | 'overdue' | 'suspended'
   }[status];
 }
 
-function subscriptionStatusLabel(status: 'trialing' | 'active' | 'past_due' | 'canceled') {
+function subscriptionStatusLabel(
+  status: 'trialing' | 'active' | 'past_due' | 'canceled',
+) {
   return {
     trialing: 'prueba',
     active: 'activo',

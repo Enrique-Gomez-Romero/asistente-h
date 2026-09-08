@@ -434,6 +434,9 @@ export type PlatformAdminData = {
   organizations: Array<{
     id: string;
     name: string;
+    phone: string | null;
+    address: string | null;
+    timezone: string;
     businessType: string;
     accountStatus: string;
     subscriptionStatus: string;
@@ -489,7 +492,7 @@ export async function getPlatformAdminData(
       `SELECT id, name, slug, description, price_cents AS priceCents, max_users AS maxUsers, max_locations AS maxLocations, max_conversations AS maxConversations, max_ai_requests AS maxAiRequests FROM subscription_plans WHERE active = 1 ORDER BY max_locations, max_users`,
     ).all<PlatformAdminData['plans'][number]>(),
     env.DB.prepare(
-      `SELECT c.id, c.name, COALESCE(op.business_type, 'general') AS businessType, COALESCE(os.status, 'active') AS accountStatus, COALESCE(s.status, 'inactive') AS subscriptionStatus, COALESCE(p.id, '') AS planId, COALESCE(p.name, 'Sin plan') AS planName, COALESCE(s.current_period_end, '') AS periodEnd, (SELECT COUNT(*) FROM memberships m WHERE m.clinic_id = c.id AND m.status = 'active') AS users, (SELECT COUNT(*) FROM conversations cv WHERE cv.clinic_id = c.id) AS conversations, COALESCE((SELECT SUM(quantity) FROM usage_events u WHERE u.clinic_id = c.id AND u.metric = 'ai_request'), 0) AS aiRequests, COALESCE((SELECT status FROM integration_connections ic WHERE ic.clinic_id = c.id AND ic.provider = 'whatsapp'), 'pending') AS whatsappStatus, c.created_at AS createdAt FROM clinics c LEFT JOIN organization_profiles op ON op.clinic_id = c.id LEFT JOIN organization_states os ON os.clinic_id = c.id LEFT JOIN subscriptions s ON s.clinic_id = c.id LEFT JOIN subscription_plans p ON p.id = s.plan_id ORDER BY c.created_at DESC`,
+      `SELECT c.id, c.name, c.phone, c.address, c.timezone, COALESCE(op.business_type, 'general') AS businessType, COALESCE(os.status, 'active') AS accountStatus, COALESCE(s.status, 'inactive') AS subscriptionStatus, COALESCE(p.id, '') AS planId, COALESCE(p.name, 'Sin plan') AS planName, COALESCE(s.current_period_end, '') AS periodEnd, (SELECT COUNT(*) FROM memberships m WHERE m.clinic_id = c.id AND m.status = 'active') AS users, (SELECT COUNT(*) FROM conversations cv WHERE cv.clinic_id = c.id) AS conversations, COALESCE((SELECT SUM(quantity) FROM usage_events u WHERE u.clinic_id = c.id AND u.metric = 'ai_request'), 0) AS aiRequests, COALESCE((SELECT status FROM integration_connections ic WHERE ic.clinic_id = c.id AND ic.provider = 'whatsapp'), 'pending') AS whatsappStatus, c.created_at AS createdAt FROM clinics c LEFT JOIN organization_profiles op ON op.clinic_id = c.id LEFT JOIN organization_states os ON os.clinic_id = c.id LEFT JOIN subscriptions s ON s.clinic_id = c.id LEFT JOIN subscription_plans p ON p.id = s.plan_id ORDER BY c.created_at DESC`,
     ).all<PlatformAdminData['organizations'][number]>(),
     env.DB.prepare(
       `SELECT mp.id, mp.clinic_id AS clinicId, c.name AS clinicName, mp.amount_cents AS amountCents, mp.currency, mp.received_at AS receivedAt, mp.status, mp.reference, mp.invoice_folio AS invoiceFolio, mp.receipt_url AS receiptUrl FROM manual_payments mp JOIN clinics c ON c.id = mp.clinic_id ORDER BY mp.created_at DESC LIMIT 30`,

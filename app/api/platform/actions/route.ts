@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import {
   adminRecordManualPayment,
   adminSetOrganizationStatus,
+  adminUpdateOrganizationProfile,
   adminUpdateManualPaymentStatus,
   adminUpdateSubscription,
   type CommercialActionResult,
@@ -12,6 +13,7 @@ import { getAuthenticatedUser } from '@/lib/auth';
 type PlatformAction =
   | 'update-subscription'
   | 'set-organization-status'
+  | 'update-organization-profile'
   | 'record-payment'
   | 'update-payment-status';
 
@@ -49,6 +51,9 @@ export async function POST(request: Request) {
       break;
     case 'set-organization-status':
       result = await adminSetOrganizationStatus(input);
+      break;
+    case 'update-organization-profile':
+      result = await adminUpdateOrganizationProfile(input);
       break;
     case 'record-payment':
       result = await adminRecordManualPayment(input);

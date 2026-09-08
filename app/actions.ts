@@ -103,7 +103,9 @@ export async function createAppointment(
       .bind(input.clinicId, input.doctorId, input.locationId)
       .first();
     if (!doctorLocation)
-      throw new Error('Ese profesional no está asignado a la sucursal elegida.');
+      throw new Error(
+        'Ese profesional no está asignado a la sucursal elegida.',
+      );
     const startsAt = parseLocalDate(input.startsAtLocal, clinic.timezone);
     if (!startsAt || Number.isNaN(startsAt.getTime()))
       throw new Error('Selecciona una fecha y hora válidas.');
@@ -385,6 +387,50 @@ export async function createLocation(input: {
   });
 }
 
+export async function updateLocation(input: {
+  clinicId: string;
+  locationId: string;
+  name: string;
+  address?: string;
+  phone?: string;
+}): Promise<ActionResult> {
+  return actionResult(async () => {
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    const name = input.name.trim();
+    if (name.length < 2) throw new Error('Escribe el nombre de la sucursal.');
+    const location = await env.DB.prepare(
+      `SELECT id FROM locations WHERE id = ? AND clinic_id = ? AND active = 1`,
+    )
+      .bind(input.locationId, input.clinicId)
+      .first();
+    if (!location) throw new Error('No se encontró la sucursal.');
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE locations SET name = ?, address = ?, phone = ? WHERE id = ? AND clinic_id = ?`,
+      ).bind(
+        name,
+        input.address?.trim() || null,
+        input.phone?.trim() || null,
+        input.locationId,
+        input.clinicId,
+      ),
+      auditStatement(
+        input.clinicId,
+        access.user.email,
+        'update',
+        'location',
+        input.locationId,
+        { name },
+      ),
+    ]);
+    revalidatePath('/app');
+    return { ok: true, message: 'Sucursal actualizada.' };
+  });
+}
+
 export async function createProfessional(input: {
   clinicId: string;
   name: string;
@@ -535,7 +581,11 @@ export async function markConversationRead(
     .bind(conversationId)
     .first<{ clinicId: string; locationId: string | null }>();
   if (!entity) return;
-  const access = await requireClinicAccess(entity.clinicId, ['owner', 'admin', 'staff']);
+  const access = await requireClinicAccess(entity.clinicId, [
+    'owner',
+    'admin',
+    'staff',
+  ]);
   await assertLocationAssignment(access, entity.clinicId, entity.locationId);
   await env.DB.prepare(
     'UPDATE conversations SET unread_count = 0 WHERE id = ? AND clinic_id = ?',
@@ -556,14 +606,23 @@ export async function sendConversationMessage(
       `SELECT c.id, c.clinic_id AS clinicId, c.location_id AS locationId, p.phone FROM conversations c LEFT JOIN patients p ON p.id = c.patient_id WHERE c.id = ?`,
     )
       .bind(conversationId)
-      .first<{ id: string; clinicId: string; locationId: string | null; phone: string | null }>();
+      .first<{
+        id: string;
+        clinicId: string;
+        locationId: string | null;
+        phone: string | null;
+      }>();
     if (!conversation) throw new Error('No se encontró la conversación.');
     const access = await requireClinicAccess(conversation.clinicId, [
       'owner',
       'admin',
       'staff',
     ]);
-    await assertLocationAssignment(access, conversation.clinicId, conversation.locationId);
+    await assertLocationAssignment(
+      access,
+      conversation.clinicId,
+      conversation.locationId,
+    );
     const now = new Date().toISOString();
     const messageId = `msg_${crypto.randomUUID()}`;
     await env.DB.batch([
@@ -576,11 +635,11 @@ export async function sendConversationMessage(
     ]);
     const delivery = conversation.phone
       ? await sendTenantWhatsAppText(
-        conversation.clinicId,
-        conversation.phone,
-        message,
-        conversation.locationId,
-      )
+          conversation.clinicId,
+          conversation.phone,
+          message,
+          conversation.locationId,
+        )
       : { sent: false, error: 'El paciente no tiene un teléfono registrado.' };
     await env.DB.prepare(
       `UPDATE messages SET external_id = ?, delivery_status = ?, last_error = ? WHERE id = ? AND conversation_id = ?`,
@@ -836,10 +895,9 @@ export async function createOrganization(input: {
     revalidatePath('/platform');
     return {
       ok: true,
-      message:
-        invitationPath
-          ? 'Negocio creado. Copia la invitación y envíala al propietario.'
-          : 'Negocio creado y asignado a tu cuenta.',
+      message: invitationPath
+        ? 'Negocio creado. Copia la invitación y envíala al propietario.'
+        : 'Negocio creado y asignado a tu cuenta.',
       organizationId: id,
       invitationPath,
     };
@@ -1068,7 +1126,10 @@ export async function updateMemberLocations(input: {
   locationIds: string[];
 }): Promise<ActionResult> {
   return actionResult(async () => {
-    const access = await requireClinicAccess(input.clinicId, ['owner', 'admin']);
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+    ]);
     const membership = await env.DB.prepare(
       `SELECT id, role FROM memberships WHERE id = ? AND clinic_id = ? AND status = 'active'`,
     )
@@ -1398,7 +1459,8 @@ async function assertLocationAssignment(
   clinicId: string,
   locationId: string | null,
 ) {
-  if (access.isPlatformAdmin || ['owner', 'admin'].includes(access.role)) return;
+  if (access.isPlatformAdmin || ['owner', 'admin'].includes(access.role))
+    return;
   if (!locationId)
     throw new Error('Esta información todavía no tiene una sucursal asignada.');
   const assignment = await env.DB.prepare(
