@@ -124,14 +124,15 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                 Ver panel cliente
               </Button>
             </Link>
-            <Link href="/logout">
+            <form action="/logout" method="post">
               <Button
+                type="submit"
                 variant="ghost"
                 className="text-white hover:bg-white/10 hover:text-white"
               >
                 Cerrar sesión
               </Button>
-            </Link>
+            </form>
           </div>
         </div>
       </header>

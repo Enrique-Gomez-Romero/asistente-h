@@ -231,13 +231,11 @@ export function OrganizationOnboarding({
                 Por seguridad, una cuenta nueva no puede crear organizaciones ni
                 ver información hasta aceptar una invitación válida.
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => window.location.assign('/logout')}
-              >
-                <LogOut data-icon="inline-start" /> Cambiar de cuenta
-              </Button>
+              <form action="/logout" method="post">
+                <Button type="submit" variant="outline">
+                  <LogOut data-icon="inline-start" /> Cambiar de cuenta
+                </Button>
+              </form>
             </CardContent>
           </Card>
         )}
