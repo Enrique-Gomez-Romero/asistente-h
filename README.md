@@ -29,7 +29,7 @@ Base funcional multiempresa para vender recepción por WhatsApp e IA mediante su
 - Centro de administración de organizaciones, planes, vigencias, suspensiones, transferencias y facturas.
 - Alta controlada: solo la plataforma crea negocios y los clientes entran mediante invitaciones de un solo uso.
 - Meta Embedded Signup preparado para autorizar el WABA y número propiedad de cada cliente.
-- Tokens de Meta por organización almacenados fuera de D1 mediante Google Secret Manager.
+- Tokens de Meta por organización cifrados con AES-256-GCM antes de almacenarse en D1.
 - OAuth de Google Calendar por organización y sincronización de altas, cambios y cancelaciones.
 - Consentimiento de campañas, anonimización de pacientes y estados de entrega de mensajes.
 
@@ -62,7 +62,7 @@ Nunca subas tokens o llaves al repositorio. En producción deben guardarse como 
 8. Configurar `META_APP_SECRET` para validar firmas.
 9. Crear y aprobar plantillas para confirmaciones y recordatorios fuera de la ventana de 24 horas.
 
-Para múltiples clientes se usa una sola aplicación de Meta de la plataforma con Embedded Signup. Cada negocio conserva su propio portafolio empresarial, cuenta de WhatsApp Business y número; no necesita una aplicación de desarrollador distinta. `phone_number_id` permite resolver el negocio correcto antes de leer o escribir datos. Los tokens por negocio deben almacenarse en Secret Manager antes de abrir el alta comercial.
+Para múltiples clientes se usa una sola aplicación de Meta de la plataforma con Embedded Signup. Cada negocio conserva su propio portafolio empresarial, cuenta de WhatsApp Business y número; no necesita una aplicación de desarrollador distinta. `phone_number_id` permite resolver el negocio correcto antes de leer o escribir datos. Los tokens se cifran individualmente en el servidor antes de guardarse en D1.
 
 ## Acceso e invitaciones
 
@@ -76,7 +76,7 @@ Las invitaciones y la recuperación de contraseña usan Resend mediante `RESEND_
 
 ## Credenciales de Meta
 
-Embedded Signup entrega un código temporal y los identificadores del WABA y número. El servidor intercambia el código, comprueba el número, suscribe el webhook y guarda el token como una versión en Google Secret Manager. D1 conserva únicamente `secret_reference`. Al desconectar WhatsApp, la referencia y el secreto se eliminan.
+Embedded Signup entrega un código temporal y los identificadores del WABA y número. El servidor intercambia el código, comprueba el número, suscribe el webhook y cifra el token con AES-256-GCM. D1 conserva el sobre cifrado en `secret_reference`; el contexto autenticado impide usarlo con otra organización o proveedor. Al desconectar WhatsApp, el sobre cifrado se elimina. La llave maestra `INTEGRATION_CREDENTIALS_ENCRYPTION_KEY` permanece exclusivamente como secreto del hosting.
 
 ## Suscripciones por transferencia
 
@@ -131,13 +131,13 @@ El proyecto incluye esquema Drizzle, SQLite/D1 e inicialización idempotente. Ad
 - `campaigns`, `campaign_recipients`, `surveys`, `staff_notifications`
 - `deposit_requests`, `patient_events`, `doctor_locations`, `doctor_hours`
 
-La versión alojada usa D1 y acceso privado. Para una operación comercial en Google Cloud, el destino recomendado es Cloud Run + Cloud SQL PostgreSQL + Secret Manager. La estructura relacional y el campo interno `clinic_id` facilitan esa migración; en el producto representa el arrendatario u organización.
+La versión alojada usa D1, acceso privado y cifrado de credenciales a nivel de aplicación. Para una operación comercial en Google Cloud, el destino recomendado es Cloud Run + Cloud SQL PostgreSQL; Secret Manager puede añadirse después como defensa adicional, pero no es un requisito de esta versión. La estructura relacional y el campo interno `clinic_id` facilitan esa migración; en el producto representa el arrendatario u organización.
 
 ## Pendientes externos antes de cobrar
 
 - Definir precios comerciales para los planes Profesional y Escala.
 - Cargar las credenciales de Resend y verificar el remitente para activar el envío real de invitaciones.
-- Cargar la aplicación de Meta y la cuenta de servicio de Google para activar Embedded Signup y Secret Manager.
+- Cargar la aplicación de Meta y la llave maestra de cifrado para activar Embedded Signup.
 - Configurar Cloud Scheduler para recordatorios y campañas.
 - Crear credenciales OAuth de Google y registrar la URI de retorno para activar la sincronización directa; CSV e iCalendar funcionan sin ellas.
 

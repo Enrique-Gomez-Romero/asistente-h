@@ -28,8 +28,8 @@
 - [ ] Suscribir mensajes y estados.
 - [ ] Aprobar plantillas de confirmación, recordatorio y reprogramación.
 - [ ] Probar la ventana de atención de 24 horas.
-- [ ] Completar Embedded Signup y guardar un token por negocio en Secret Manager.
-- [ ] Dar a la cuenta de servicio únicamente permisos de lectura/escritura sobre los secretos de Asistente H.
+- [ ] Completar Embedded Signup y comprobar que cada negocio conserva su propio token cifrado.
+- [ ] Guardar `INTEGRATION_CREDENTIALS_ENCRYPTION_KEY` como secreto del hosting y mantener una copia de recuperación con acceso restringido.
 
 ## Gemini central
 

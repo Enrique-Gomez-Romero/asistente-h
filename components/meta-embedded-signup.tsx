@@ -141,7 +141,7 @@ export function MetaEmbeddedSignup({
       setNotice({
         ok: false,
         message:
-          'La aplicación de Meta y Google Secret Manager todavía no están configurados.',
+          'La aplicación de Meta y el cifrado de credenciales todavía no están configurados.',
       });
       return;
     }
@@ -237,8 +237,8 @@ export function MetaEmbeddedSignup({
       </div>
       {!ready ? (
         <p className="rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
-          Falta configurar la aplicación de Meta y las credenciales de Google
-          Secret Manager. El botón se habilitará automáticamente después.
+          Falta configurar la aplicación de Meta o la clave de cifrado del
+          servidor. El botón se habilitará automáticamente después.
         </p>
       ) : null}
       {notice ? (

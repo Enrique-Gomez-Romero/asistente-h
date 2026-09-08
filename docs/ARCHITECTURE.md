@@ -48,7 +48,7 @@ Membresía + rol ──► Organización activa ──► Datos operativos
 8. El número receptor de Meta determina la organización antes de procesar el mensaje.
 9. El consumo se registra por organización y se compara con el periodo y los límites del plan.
 10. Un usuario sin membresía no puede crear organizaciones; debe aceptar un token de invitación ligado a su correo.
-11. D1 nunca guarda el token de Meta: solo la referencia a Google Secret Manager.
+11. D1 solo guarda credenciales cifradas con AES-256-GCM; la llave maestra permanece fuera de la base de datos.
 12. Google Calendar se sincroniza como copia operativa; D1 sigue siendo la agenda oficial.
 13. Los trabajos programados se reclaman de forma atómica para evitar envíos dobles.
 
@@ -64,7 +64,7 @@ Membresía + rol ──► Organización activa ──► Datos operativos
 - `lib/assistant.ts`: orquestación de la cuenta central de Gemini y fallback local.
 - `lib/automations.ts`: cola, plantillas, reintentos y envíos programados.
 - `lib/whatsapp.ts`: envío resuelto por organización y número de Meta.
-- `lib/google-secrets.ts`: acceso firmado a Google Secret Manager con cuenta de servicio.
+- `lib/integration-secrets.ts`: cifrado autenticado de credenciales por organización y proveedor.
 - `lib/google-calendar.ts`: OAuth, renovación de tokens y sincronización de eventos.
 - `lib/observability.ts`: registros operativos estructurados y sanitizados.
 - `lib/invitations.ts` y `lib/email.ts`: tokens de un solo uso y entrega de invitaciones.
@@ -81,7 +81,7 @@ La evolución recomendada es:
 
 - Cloud Run para el contenedor web y los webhooks.
 - Cloud SQL PostgreSQL para datos transaccionales.
-- Secret Manager para tokens individuales de Meta; la llave central de Gemini se configura como secreto global del servicio.
+- Cifrado AES-256-GCM para tokens individuales de Meta; las llaves maestras y la llave central de Gemini se configuran como secretos globales del servicio.
 - Cloud Tasks para trabajos asíncronos.
 - Cloud Scheduler para buscar recordatorios pendientes.
 - Cloud Logging y Error Reporting para observabilidad.
@@ -92,4 +92,4 @@ Para evitar dobles reservaciones en PostgreSQL se debe agregar una restricción 
 
 En esta etapa la cobranza es manual. El administrador registra la transferencia y factura; esa operación actualiza `subscriptions`, conserva `manual_payments` y agrega `subscription_events`. Si después se conecta una pasarela, sus webhooks reemplazarán esta captura como fuente de verdad financiera sin cambiar el control de acceso.
 
-Para Meta multiempresa, cada cliente conserva su WABA y número. Una sola aplicación de desarrollador de Asistente H puede incorporarlos mediante Embedded Signup. Los identificadores no son secretos; los tokens se guardan por organización en Secret Manager y nunca en el navegador ni en D1.
+Para Meta multiempresa, cada cliente conserva su WABA y número. Una sola aplicación de desarrollador de Asistente H puede incorporarlos mediante Embedded Signup. Los identificadores no son secretos; los tokens se cifran por organización y nunca se muestran en el navegador. D1 solo recibe el texto cifrado y la llave maestra permanece en el entorno del servidor.

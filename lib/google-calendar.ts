@@ -3,8 +3,9 @@ import { env } from 'cloudflare:workers';
 import { ensureDatabase } from '@/db/initialize';
 import {
   accessOrganizationSecret,
+  integrationCredentialEncryptionConfigured,
   storeOrganizationSecret,
-} from '@/lib/google-secrets';
+} from '@/lib/integration-secrets';
 import { logOperationalEvent } from '@/lib/observability';
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -34,7 +35,8 @@ export function googleCalendarConfigured() {
     process.env.GOOGLE_CLIENT_ID &&
       process.env.GOOGLE_CLIENT_SECRET &&
       process.env.GOOGLE_OAUTH_STATE_SECRET &&
-      process.env.PUBLIC_APP_URL,
+      process.env.PUBLIC_APP_URL &&
+      integrationCredentialEncryptionConfigured(),
   );
 }
 
@@ -103,7 +105,7 @@ export async function completeGoogleCalendarAuthorization(input: {
     );
   const secretReference = await storeOrganizationSecret(
     state.clinicId,
-    `google-calendar-${state.connectionId}`,
+    'google_calendar',
     JSON.stringify({
       refreshToken: result.refresh_token,
       scope: result.scope,
@@ -176,6 +178,7 @@ export async function syncAppointmentToGoogleCalendar(
     if (!connection?.secretReference || !appointment) return { synced: false };
     const accessToken = await refreshGoogleAccessToken(
       connection.secretReference,
+      clinicId,
     );
     const calendarId = encodeURIComponent(connection.calendarId || 'primary');
     const baseUrl = `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`;
@@ -303,11 +306,18 @@ export async function verifyOAuthState(value: string): Promise<OAuthState> {
   return payload;
 }
 
-async function refreshGoogleAccessToken(secretReference: string) {
+async function refreshGoogleAccessToken(
+  secretReference: string,
+  clinicId: string,
+) {
   const cached = accessTokenCache.get(secretReference);
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
   const credential = JSON.parse(
-    await accessOrganizationSecret(secretReference),
+    await accessOrganizationSecret(
+      secretReference,
+      clinicId,
+      'google_calendar',
+    ),
   ) as StoredGoogleCredential;
   if (!credential.refreshToken)
     throw new Error('La credencial de Google Calendar está incompleta.');

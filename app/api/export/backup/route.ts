@@ -86,7 +86,8 @@ export async function GET(request: Request) {
       'No incluye tokens, secretos de integraciones ni tokens de invitación.',
     data: Object.fromEntries(entries),
   };
-  const clinicName = String(clinicRows[0].name ?? 'negocio');
+  const clinicName =
+    typeof clinicRows[0].name === 'string' ? clinicRows[0].name : 'negocio';
   const date = exportedAt.slice(0, 10);
   return new Response(JSON.stringify(payload, null, 2), {
     headers: {

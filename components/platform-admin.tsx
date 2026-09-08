@@ -382,8 +382,8 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                   ready={data.infrastructure.metaEmbeddedSignup}
                 />
                 <InfrastructureRow
-                  label="Google Secret Manager"
-                  ready={data.infrastructure.googleSecretManager}
+                  label="Cifrado de credenciales"
+                  ready={data.infrastructure.credentialEncryption}
                 />
                 <InfrastructureRow
                   label="Ejecución de automatizaciones"

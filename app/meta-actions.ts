@@ -6,10 +6,9 @@ import { revalidatePath } from 'next/cache';
 import { ensureDatabase } from '@/db/initialize';
 import {
   accessOrganizationSecret,
-  deleteOrganizationSecret,
-  googleSecretManagerConfigured,
+  integrationCredentialEncryptionConfigured,
   storeOrganizationSecret,
-} from '@/lib/google-secrets';
+} from '@/lib/integration-secrets';
 import { requireClinicAccess } from '@/lib/saas';
 
 export type MetaActionResult = {
@@ -43,9 +42,9 @@ export async function completeMetaEmbeddedSignup(input: {
       .bind(input.locationId, input.clinicId)
       .first();
     if (!location) throw new Error('Selecciona una sucursal válida.');
-    if (!googleSecretManagerConfigured())
+    if (!integrationCredentialEncryptionConfigured())
       throw new Error(
-        'Configura Google Secret Manager antes de conectar números reales.',
+        'Configura la clave de cifrado del servidor antes de conectar números reales.',
       );
     const appId = required('META_APP_ID');
     const appSecret = required('META_APP_SECRET');
@@ -97,7 +96,7 @@ export async function completeMetaEmbeddedSignup(input: {
 
     const secretReference = await storeOrganizationSecret(
       input.clinicId,
-      `whatsapp-${input.phoneNumberId}`,
+      'whatsapp',
       tokenData.access_token,
     );
     const now = new Date().toISOString();
@@ -155,7 +154,11 @@ export async function testMetaConnection(
       }>();
     if (!connection?.phoneNumberId || !connection.secretReference)
       throw new Error('WhatsApp todavía no está conectado.');
-    const token = await accessOrganizationSecret(connection.secretReference);
+    const token = await accessOrganizationSecret(
+      connection.secretReference,
+      clinicId,
+      'whatsapp',
+    );
     const graphVersion = process.env.WHATSAPP_GRAPH_VERSION ?? 'v23.0';
     const response = await fetch(
       `https://graph.facebook.com/${graphVersion}/${connection.phoneNumberId}?fields=display_phone_number`,
@@ -178,13 +181,6 @@ export async function disconnectMetaWhatsApp(
 ): Promise<MetaActionResult> {
   return metaAction(async () => {
     const access = await requireClinicAccess(clinicId, ['owner', 'admin']);
-    const connection = await env.DB.prepare(
-      `SELECT secret_reference AS secretReference FROM integration_connections WHERE id = ? AND clinic_id = ? AND provider = 'whatsapp'`,
-    )
-      .bind(connectionId, clinicId)
-      .first<{ secretReference: string | null }>();
-    if (connection?.secretReference)
-      await deleteOrganizationSecret(connection.secretReference);
     const now = new Date().toISOString();
     await env.DB.batch([
       env.DB.prepare(

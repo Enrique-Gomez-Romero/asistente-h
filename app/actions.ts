@@ -7,7 +7,6 @@ import { ensureDatabase } from '@/db/initialize';
 import { enqueueAppointmentAutomations } from '@/lib/automations';
 import { sendInvitationEmail } from '@/lib/email';
 import { syncAppointmentToGoogleCalendar } from '@/lib/google-calendar';
-import { deleteOrganizationSecret } from '@/lib/google-secrets';
 import { createInvitationToken, hashInvitationToken } from '@/lib/invitations';
 import { normalizePhone } from '@/lib/phone';
 import { appointmentEnd } from '@/lib/scheduling';
@@ -1324,8 +1323,6 @@ export async function disconnectGoogleCalendar(
       .bind(connectionId, clinicId)
       .first<{ secretReference: string | null }>();
     if (!connection) throw new Error('No se encontró esa conexión de Google.');
-    if (connection.secretReference)
-      await deleteOrganizationSecret(connection.secretReference);
     const now = new Date().toISOString();
     await env.DB.prepare(
       `UPDATE integration_connections SET status = 'disconnected', secret_reference = NULL, updated_at = ? WHERE id = ? AND clinic_id = ?`,

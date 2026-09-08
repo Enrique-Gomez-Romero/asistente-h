@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 
 import { ensureDatabase } from '@/db/initialize';
-import { googleSecretManagerConfigured } from '@/lib/google-secrets';
+import { integrationCredentialEncryptionConfigured } from '@/lib/integration-secrets';
 import type { SaasContext } from '@/lib/saas';
 
 export type ClinicRecord = {
@@ -412,9 +412,9 @@ export async function getDashboardData(
           process.env.META_APP_ID &&
           process.env.META_CONFIG_ID &&
           process.env.META_APP_SECRET &&
-          googleSecretManagerConfigured(),
+          integrationCredentialEncryptionConfigured(),
         ),
-        secretStorageReady: googleSecretManagerConfigured(),
+        secretStorageReady: integrationCredentialEncryptionConfigured(),
       },
       invitationEmailReady: Boolean(
         process.env.RESEND_API_KEY && process.env.EMAIL_FROM && process.env.PUBLIC_APP_URL,

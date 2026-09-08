@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 
 import { getAuthenticatedUser, type AppUser } from '@/lib/auth';
 import { ensureDatabase } from '@/db/initialize';
-import { googleSecretManagerConfigured } from '@/lib/google-secrets';
+import { integrationCredentialEncryptionConfigured } from '@/lib/integration-secrets';
 
 export type MembershipRole = 'owner' | 'admin' | 'staff' | 'viewer';
 
@@ -411,7 +411,7 @@ export type PlatformAdminData = {
     gemini: boolean;
     invitationEmail: boolean;
     metaEmbeddedSignup: boolean;
-    googleSecretManager: boolean;
+    credentialEncryption: boolean;
     automationRunner: boolean;
   };
   stats: {
@@ -512,7 +512,7 @@ export async function getPlatformAdminData(
         process.env.META_CONFIG_ID &&
         process.env.META_APP_SECRET,
       ),
-      googleSecretManager: googleSecretManagerConfigured(),
+      credentialEncryption: integrationCredentialEncryptionConfigured(),
       automationRunner: Boolean(process.env.AUTOMATION_SECRET),
     },
     stats,

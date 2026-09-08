@@ -3319,8 +3319,9 @@ function SettingsView({
               </>
             ) : null}
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs leading-relaxed text-emerald-800">
-              Los tokens de cada negocio se guardan en Google Secret Manager; la
-              base de datos conserva únicamente una referencia segura.
+              Los tokens de cada negocio se cifran en el servidor antes de
+              guardarse. Cada organización conserva una credencial separada que
+              nunca se muestra en el navegador.
             </div>
           </CardContent>
         </Card>

@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 
 import { ensureDatabase } from '@/db/initialize';
-import { accessOrganizationSecret } from '@/lib/google-secrets';
+import { accessOrganizationSecret } from '@/lib/integration-secrets';
 import { normalizePhone } from '@/lib/phone';
 import { recordUsage } from '@/lib/saas';
 
@@ -131,6 +131,8 @@ async function getTenantCredentials(
         phoneNumberId,
         accessToken: await accessOrganizationSecret(
           connection.secretReference,
+          clinicId,
+          'whatsapp',
         ),
       };
     } catch (error) {

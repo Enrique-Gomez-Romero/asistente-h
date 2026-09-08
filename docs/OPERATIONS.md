@@ -7,7 +7,7 @@
 3. Realizarlo diariamente durante el piloto y antes de cada migración o despliegue importante.
 4. Conservar al menos una copia semanal fuera de la cuenta principal.
 
-El respaldo contiene datos personales y operativos del negocio. No contiene tokens de Meta o Google, referencias de secretos ni tokens de invitación. Las credenciales deben recuperarse desde Google Secret Manager o volver a autorizarse.
+El respaldo contiene datos personales y operativos del negocio. No contiene tokens cifrados de Meta o Google, referencias de credenciales ni tokens de invitación. Después de una restauración se deben conservar la misma llave maestra del entorno o volver a autorizar las integraciones.
 
 ## Restauración
 
@@ -19,7 +19,7 @@ No existe restauración desde el navegador para evitar sobrescrituras accidental
 4. Validar que el archivo tenga `format: asistente-h-backup`, versión compatible y el `clinicId` esperado.
 5. Importar las tablas respetando dependencias: clínica, usuarios, catálogo, pacientes, citas, conversaciones y finalmente historiales.
 6. Comparar conteos por tabla y revisar una muestra de agenda, pacientes y conversaciones.
-7. Volver a autorizar Meta y Google Calendar si las referencias de secretos no están disponibles.
+7. Volver a autorizar Meta y Google Calendar si las credenciales cifradas o la llave maestra original no están disponibles.
 8. Cambiar la conexión únicamente después de documentar y aprobar la validación.
 
 Para una pérdida completa del servicio se debe usar primero la recuperación administrada del proveedor de D1. El JSON es una copia adicional por organización y un medio de portabilidad, no reemplaza las copias del proveedor.
