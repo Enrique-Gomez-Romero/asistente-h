@@ -33,14 +33,6 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from '@/components/ui/native-select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import type { PlatformAdminData } from '@/lib/saas';
 
 export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
@@ -202,30 +194,21 @@ export function PlatformAdmin({ data }: { data: PlatformAdminData }) {
                 />
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Organización</TableHead>
-                      <TableHead>Uso</TableHead>
-                      <TableHead>Plan y vigencia</TableHead>
-                      <TableHead>Cuenta</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {organizations.map((organization) => (
-                      <OrganizationRow
-                        key={organization.id}
-                        organization={organization}
-                        plans={data.plans}
-                        pending={pending}
-                        run={run}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+            <CardContent className="space-y-4">
+              {organizations.map((organization) => (
+                <OrganizationCard
+                  key={organization.id}
+                  organization={organization}
+                  plans={data.plans}
+                  pending={pending}
+                  run={run}
+                />
+              ))}
+              {organizations.length === 0 ? (
+                <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                  No encontramos negocios con esa búsqueda.
+                </div>
+              ) : null}
             </CardContent>
           </Card>
           <div className="space-y-5">
@@ -522,7 +505,7 @@ function InfrastructureRow({
   );
 }
 
-function OrganizationRow({
+function OrganizationCard({
   organization,
   plans,
   pending,
@@ -551,24 +534,64 @@ function OrganizationRow({
       : new Date().toISOString().slice(0, 10),
   );
   return (
-    <TableRow>
-      <TableCell>
-        <div>
-          <p className="font-semibold">{organization.name}</p>
-          <p className="text-xs text-muted-foreground">
+    <section className="rounded-2xl border bg-background p-4 shadow-[0_8px_24px_rgb(26_52_45/5%)] sm:p-5">
+      <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="truncate text-base font-semibold">{organization.name}</p>
+          <p className="mt-0.5 text-sm text-muted-foreground">
             {organization.businessType} ·{' '}
             {organization.whatsappStatus === 'connected'
               ? 'WhatsApp listo'
               : 'WhatsApp pendiente'}
           </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${organization.accountStatus === 'suspended' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}
+          >
+            <ShieldCheck className="size-3" />
+            {organization.accountStatus === 'suspended'
+              ? 'Suspendida'
+              : 'Activa'}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              run(() =>
+                runPlatformAdminAction('set-organization-status', {
+                  clinicId: organization.id,
+                  status:
+                    organization.accountStatus === 'suspended'
+                      ? 'active'
+                      : 'suspended',
+                  reason:
+                    organization.accountStatus === 'suspended'
+                      ? undefined
+                      : 'Control administrativo o pago pendiente',
+                }),
+              )
+            }
+          >
+            {organization.accountStatus === 'suspended'
+              ? 'Reactivar'
+              : 'Suspender'}
+          </Button>
           <a
             href={`/app?organization=${encodeURIComponent(organization.id)}`}
-            className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary"
+            className={buttonVariants({ size: 'sm' })}
           >
-            Abrir operación <ExternalLink className="size-3" />
+            Abrir operación <ExternalLink data-icon="inline-end" />
           </a>
+        </div>
+      </div>
+
+      <div className="mt-5 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(150px,0.5fr)_minmax(300px,1fr)]">
+        <div className="min-w-0">
+          <p className="mb-3 text-sm font-semibold">Datos del negocio</p>
           <form
-            className="mt-3 space-y-2"
+            className="space-y-2"
             onSubmit={(event) => {
               event.preventDefault();
               run(() =>
@@ -635,157 +658,125 @@ function OrganizationRow({
             </Button>
           </form>
         </div>
-      </TableCell>
-      <TableCell>
-        <div className="space-y-1 text-xs">
-          <p>
-            <MessageCircle className="mr-1 inline size-3" />
-            {organization.conversations} conversaciones
-          </p>
-          <p>
-            <Activity className="mr-1 inline size-3" />
-            {organization.aiRequests} solicitudes IA
-          </p>
-          <p>
-            <Users className="mr-1 inline size-3" />
-            {organization.users} usuarios
-          </p>
+
+        <div className="min-w-0">
+          <p className="mb-3 text-sm font-semibold">Uso del periodo</p>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p className="rounded-lg bg-muted/50 px-3 py-2">
+              <MessageCircle className="mr-1 inline size-3" />
+              {organization.conversations} conversaciones
+            </p>
+            <p className="rounded-lg bg-muted/50 px-3 py-2">
+              <Activity className="mr-1 inline size-3" />
+              {organization.aiRequests} solicitudes IA
+            </p>
+            <p className="rounded-lg bg-muted/50 px-3 py-2">
+              <Users className="mr-1 inline size-3" />
+              {organization.users} usuarios
+            </p>
+          </div>
         </div>
-      </TableCell>
-      <TableCell>
-        <div className="min-w-[210px] space-y-2">
-          <NativeSelect
-            aria-label={`Plan de ${organization.name}`}
-            value={planId}
-            onChange={(event) => setPlanId(event.target.value)}
-            className="w-full"
-          >
-            {plans.map((plan) => (
-              <NativeSelectOption key={plan.id} value={plan.id}>
-                {plan.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-          <div className="grid grid-cols-2 gap-2">
+
+        <div className="min-w-0">
+          <p className="mb-3 text-sm font-semibold">Plan y vigencia</p>
+          <div className="space-y-2">
             <NativeSelect
-              aria-label={`Estado de suscripción de ${organization.name}`}
-              value={status}
-              onChange={(event) =>
-                setStatus(event.target.value as typeof status)
-              }
+              aria-label={`Plan de ${organization.name}`}
+              value={planId}
+              onChange={(event) => setPlanId(event.target.value)}
+              className="w-full"
             >
-              <NativeSelectOption value="trialing">Prueba</NativeSelectOption>
-              <NativeSelectOption value="active">Activa</NativeSelectOption>
-              <NativeSelectOption value="past_due">
-                Pago pendiente
-              </NativeSelectOption>
-              <NativeSelectOption value="canceled">
-                Cancelada
-              </NativeSelectOption>
+              {plans.map((plan) => (
+                <NativeSelectOption key={plan.id} value={plan.id}>
+                  {plan.name}
+                </NativeSelectOption>
+              ))}
             </NativeSelect>
-            <Input
-              aria-label={`Vigencia de ${organization.name}`}
-              type="date"
-              value={periodEnd}
-              onChange={(event) => setPeriodEnd(event.target.value)}
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={() =>
-                run(() =>
-                  runPlatformAdminAction('update-subscription', {
-                    clinicId: organization.id,
-                    planId,
-                    status,
-                    periodEnd,
-                  }),
-                )
-              }
-            >
-              <CalendarClock data-icon="inline-start" />
-              Guardar
-            </Button>
-            <Button
-              size="sm"
-              disabled={pending}
-              onClick={() => {
-                setStatus('active');
-                run(() =>
-                  runPlatformAdminAction('update-subscription', {
-                    clinicId: organization.id,
-                    planId,
-                    status: 'active',
-                    periodEnd,
-                  }),
-                );
-              }}
-            >
-              Activar
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={pending}
-              onClick={() => {
-                const renewal = renewalDate(periodEnd);
-                setStatus('active');
-                setPeriodEnd(renewal);
-                run(() =>
-                  runPlatformAdminAction('update-subscription', {
-                    clinicId: organization.id,
-                    planId,
-                    status: 'active',
-                    periodEnd: renewal,
-                  }),
-                );
-              }}
-            >
-              Renovar 30 días
-            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <NativeSelect
+                aria-label={`Estado de suscripción de ${organization.name}`}
+                value={status}
+                onChange={(event) =>
+                  setStatus(event.target.value as typeof status)
+                }
+              >
+                <NativeSelectOption value="trialing">Prueba</NativeSelectOption>
+                <NativeSelectOption value="active">Activa</NativeSelectOption>
+                <NativeSelectOption value="past_due">
+                  Pago pendiente
+                </NativeSelectOption>
+                <NativeSelectOption value="canceled">
+                  Cancelada
+                </NativeSelectOption>
+              </NativeSelect>
+              <Input
+                aria-label={`Vigencia de ${organization.name}`}
+                type="date"
+                value={periodEnd}
+                onChange={(event) => setPeriodEnd(event.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() =>
+                  run(() =>
+                    runPlatformAdminAction('update-subscription', {
+                      clinicId: organization.id,
+                      planId,
+                      status,
+                      periodEnd,
+                    }),
+                  )
+                }
+              >
+                <CalendarClock data-icon="inline-start" />
+                Guardar
+              </Button>
+              <Button
+                size="sm"
+                disabled={pending}
+                onClick={() => {
+                  setStatus('active');
+                  run(() =>
+                    runPlatformAdminAction('update-subscription', {
+                      clinicId: organization.id,
+                      planId,
+                      status: 'active',
+                      periodEnd,
+                    }),
+                  );
+                }}
+              >
+                Activar
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={pending}
+                onClick={() => {
+                  const renewal = renewalDate(periodEnd);
+                  setStatus('active');
+                  setPeriodEnd(renewal);
+                  run(() =>
+                    runPlatformAdminAction('update-subscription', {
+                      clinicId: organization.id,
+                      planId,
+                      status: 'active',
+                      periodEnd: renewal,
+                    }),
+                  );
+                }}
+              >
+                Renovar 30 días
+              </Button>
+            </div>
           </div>
         </div>
-      </TableCell>
-      <TableCell>
-        <div className="min-w-[140px] space-y-2">
-          <div
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${organization.accountStatus === 'suspended' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}
-          >
-            <ShieldCheck className="size-3" />
-            {organization.accountStatus === 'suspended'
-              ? 'Suspendida'
-              : 'Activa'}
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={pending}
-            onClick={() =>
-              run(() =>
-                runPlatformAdminAction('set-organization-status', {
-                  clinicId: organization.id,
-                  status:
-                    organization.accountStatus === 'suspended'
-                      ? 'active'
-                      : 'suspended',
-                  reason:
-                    organization.accountStatus === 'suspended'
-                      ? undefined
-                      : 'Control administrativo o pago pendiente',
-                }),
-              )
-            }
-          >
-            {organization.accountStatus === 'suspended'
-              ? 'Reactivar'
-              : 'Suspender'}
-          </Button>
-        </div>
-      </TableCell>
-    </TableRow>
+      </div>
+    </section>
   );
 }
 
