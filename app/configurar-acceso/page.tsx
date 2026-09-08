@@ -1,6 +1,10 @@
 import { KeyRound, Sparkles } from 'lucide-react';
+import { env } from 'cloudflare:workers';
+import { redirect } from 'next/navigation';
 
 import { BootstrapAdminForm } from '@/components/auth-forms';
+import { ensureDatabase } from '@/db/initialize';
+import { loginPath } from '@/lib/auth';
 import {
   Card,
   CardContent,
@@ -16,6 +20,13 @@ export default async function SetupAccessPage({
 }: {
   searchParams: Promise<{ token?: string }>;
 }) {
+  await ensureDatabase();
+  const existingAdmin = await env.DB.prepare(
+    `SELECT c.user_id FROM auth_credentials c
+     JOIN platform_admins p ON p.user_id = c.user_id LIMIT 1`,
+  ).first();
+  if (existingAdmin) redirect(loginPath('/platform'));
+
   const { token = '' } = await searchParams;
   return (
     <main className="grid min-h-screen place-items-center bg-[#f4f8f6] px-4 py-10">
