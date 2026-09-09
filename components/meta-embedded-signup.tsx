@@ -46,9 +46,10 @@ export function MetaEmbeddedSignup({
   ready,
   connected,
   phoneNumberId,
+  scope = 'location',
 }: {
   clinicId: string;
-  locationId: string;
+  locationId: string | null;
   locationName: string;
   connectionId?: string;
   appId: string | null;
@@ -56,6 +57,7 @@ export function MetaEmbeddedSignup({
   ready: boolean;
   connected: boolean;
   phoneNumberId: string | null;
+  scope?: 'organization' | 'location';
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -125,7 +127,10 @@ export function MetaEmbeddedSignup({
       const result = await completeMetaEmbeddedSignup({
         clinicId,
         locationId,
-        label: `WhatsApp · ${locationName}`,
+        label:
+          scope === 'organization'
+            ? 'WhatsApp principal'
+            : `WhatsApp · ${locationName}`,
         code: authorizationCode,
         wabaId: sessionInfo.wabaId,
         phoneNumberId: sessionInfo.phoneNumberId,
@@ -136,7 +141,7 @@ export function MetaEmbeddedSignup({
       setSessionInfo(null);
       if (result.ok) router.refresh();
     });
-  }, [authorizationCode, clinicId, locationId, locationName, router, sessionInfo]);
+  }, [authorizationCode, clinicId, locationId, locationName, router, scope, sessionInfo]);
 
   function connect() {
     setNotice(null);
@@ -186,14 +191,19 @@ export function MetaEmbeddedSignup({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold">WhatsApp · {locationName}</p>
+            <p className="text-sm font-semibold">
+              {scope === 'organization'
+                ? 'WhatsApp principal del negocio'
+                : `WhatsApp · ${locationName}`}
+            </p>
             <Badge variant={connected ? 'default' : 'secondary'}>
               {connected ? 'Conectado' : ready ? 'Disponible' : 'Pendiente'}
             </Badge>
           </div>
           <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">
-            El propietario inicia sesión en Meta, selecciona su empresa y
-            autoriza su propio número. Asistente H nunca muestra el token.
+            {scope === 'organization'
+              ? 'Este número atiende todas las sedes. Si una sede tiene un número exclusivo, se usará como reemplazo para esa sede.'
+              : 'Número exclusivo opcional para esta sede. Si no se configura, se utilizará el WhatsApp principal del negocio.'}
           </p>
           {phoneNumberId ? (
             <p className="mt-2 font-mono text-[11px] text-muted-foreground">

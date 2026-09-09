@@ -19,7 +19,7 @@ export type MetaActionResult = {
 
 export async function completeMetaEmbeddedSignup(input: {
   clinicId: string;
-  locationId: string;
+  locationId: string | null;
   label?: string;
   code: string;
   wabaId: string;
@@ -36,12 +36,14 @@ export async function completeMetaEmbeddedSignup(input: {
       !/^\d+$/.test(input.phoneNumberId)
     )
       throw new Error('Meta no devolvió una autorización completa.');
-    const location = await env.DB.prepare(
-      `SELECT id FROM locations WHERE id = ? AND clinic_id = ? AND active = 1`,
-    )
-      .bind(input.locationId, input.clinicId)
-      .first();
-    if (!location) throw new Error('Selecciona una sucursal válida.');
+    if (input.locationId) {
+      const location = await env.DB.prepare(
+        `SELECT id FROM locations WHERE id = ? AND clinic_id = ? AND active = 1`,
+      )
+        .bind(input.locationId, input.clinicId)
+        .first();
+      if (!location) throw new Error('Selecciona una sucursal válida.');
+    }
     if (!integrationCredentialEncryptionConfigured())
       throw new Error(
         'Configura la clave de cifrado del servidor antes de conectar números reales.',
@@ -125,6 +127,8 @@ export async function completeMetaEmbeddedSignup(input: {
           phoneNumberId: input.phoneNumberId,
           displayPhoneNumber: phoneData.display_phone_number ?? null,
           verifiedName: phoneData.verified_name ?? null,
+          scope: input.locationId ? 'location' : 'organization',
+          locationId: input.locationId,
         }),
         now,
       ),

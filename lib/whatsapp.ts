@@ -108,9 +108,15 @@ async function getTenantCredentials(
   | { ok: false; error: string }
 > {
   const connection = await env.DB.prepare(
-    `SELECT phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp' AND status = 'connected' AND (? IS NULL OR location_id = ?) ORDER BY CASE WHEN location_id = ? THEN 0 ELSE 1 END, created_at LIMIT 1`,
+    `SELECT phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp' AND status = 'connected' AND ((? IS NULL AND location_id IS NULL) OR (? IS NOT NULL AND (location_id = ? OR location_id IS NULL))) ORDER BY CASE WHEN location_id = ? THEN 0 WHEN location_id IS NULL THEN 1 ELSE 2 END, created_at LIMIT 1`,
   )
-    .bind(clinicId, locationId ?? null, locationId ?? null, locationId ?? null)
+    .bind(
+      clinicId,
+      locationId ?? null,
+      locationId ?? null,
+      locationId ?? null,
+      locationId ?? null,
+    )
     .first<{
       phoneNumberId: string | null;
       secretReference: string | null;

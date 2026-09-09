@@ -2535,140 +2535,191 @@ function IntegrationsView({
   const connected = data.saas.integrations.filter(
     (item) => item.status === 'connected',
   );
+  const primaryWhatsapp = connected.find(
+    (item) => item.provider === 'whatsapp' && item.locationId === null,
+  );
   return (
     <>
       <PageHeading
-        eyebrow="Servicios por establecimiento"
-        title="WhatsApp y Google por sucursal"
-        description="Cada conexión queda identificada y vinculada a la sucursal que atenderá."
+        eyebrow="Canales del negocio"
+        title="WhatsApp del negocio"
+        description="Usa un número principal para todas las sedes. Los números exclusivos por sucursal son opcionales."
       />
       <div className="space-y-5">
-        {data.locations.map((location) => {
-          const locationConnections = connected.filter(
-            (item) => item.locationId === location.id,
-          );
-          const whatsappConnections = locationConnections.filter(
-            (item) => item.provider === 'whatsapp',
-          );
-          const googleConnections = locationConnections.filter(
-            (item) => item.provider === 'google_calendar',
-          );
-          return (
-            <Card
-              key={location.id}
-              className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]"
-            >
-              <CardHeader>
-                <CardTitle>{location.name}</CardTitle>
-                <CardDescription>
-                  {location.address ?? 'Dirección pendiente'} ·{' '}
-                  {locationConnections.length} conexiones
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-5 xl:grid-cols-2">
-                <div className="space-y-3">
-                  <p className="text-sm font-semibold">Números de WhatsApp</p>
-                  {whatsappConnections.map((connection) => (
-                    <MetaEmbeddedSignup
-                      key={connection.id}
-                      clinicId={data.clinic.id}
-                      locationId={location.id}
-                      locationName={location.name}
-                      connectionId={connection.id}
-                      appId={data.integration.metaEmbeddedSignup.appId}
-                      configId={data.integration.metaEmbeddedSignup.configId}
-                      ready={data.integration.metaEmbeddedSignup.ready}
-                      connected
-                      phoneNumberId={connection.phoneNumberId}
-                    />
-                  ))}
-                  {canManage ? (
-                    <MetaEmbeddedSignup
-                      clinicId={data.clinic.id}
-                      locationId={location.id}
-                      locationName={location.name}
-                      appId={data.integration.metaEmbeddedSignup.appId}
-                      configId={data.integration.metaEmbeddedSignup.configId}
-                      ready={data.integration.metaEmbeddedSignup.ready}
-                      connected={false}
-                      phoneNumberId={null}
-                    />
-                  ) : null}
-                </div>
-                <div className="space-y-3">
-                  <p className="text-sm font-semibold">Calendarios de Google</p>
-                  {googleConnections.map((connection) => (
-                    <div
-                      key={connection.id}
-                      className="flex items-center gap-3 rounded-xl border p-3"
-                    >
-                      <CalendarDays className="size-4 text-primary" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">
-                          {connection.label ?? 'Google Calendar'}
+        <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+          <CardHeader>
+            <CardTitle>Conexión principal</CardTitle>
+            <CardDescription>
+              Este es el número que verá el cliente y atenderá todas las sedes.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {primaryWhatsapp ? (
+              <MetaEmbeddedSignup
+                clinicId={data.clinic.id}
+                locationId={null}
+                locationName={data.clinic.name}
+                connectionId={primaryWhatsapp.id}
+                appId={data.integration.metaEmbeddedSignup.appId}
+                configId={data.integration.metaEmbeddedSignup.configId}
+                ready={data.integration.metaEmbeddedSignup.ready}
+                connected
+                phoneNumberId={primaryWhatsapp.phoneNumberId}
+                scope="organization"
+              />
+            ) : canManage ? (
+              <MetaEmbeddedSignup
+                clinicId={data.clinic.id}
+                locationId={null}
+                locationName={data.clinic.name}
+                appId={data.integration.metaEmbeddedSignup.appId}
+                configId={data.integration.metaEmbeddedSignup.configId}
+                ready={data.integration.metaEmbeddedSignup.ready}
+                connected={false}
+                phoneNumberId={null}
+                scope="organization"
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                El propietario todavía no conecta el WhatsApp principal.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <details className="group rounded-2xl border bg-card shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+          <summary className="cursor-pointer list-none px-6 py-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold">Configuración avanzada por sede</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Agrega un número exclusivo o un calendario distinto sólo cuando una sede lo necesite.
+                </p>
+              </div>
+              <Badge variant="outline">Opcional</Badge>
+            </div>
+          </summary>
+          <div className="space-y-4 border-t px-6 py-5">
+            {data.locations.map((location) => {
+              const locationConnections = connected.filter(
+                (item) => item.locationId === location.id,
+              );
+              const whatsappOverride = locationConnections.find(
+                (item) => item.provider === 'whatsapp',
+              );
+              const googleConnections = locationConnections.filter(
+                (item) => item.provider === 'google_calendar',
+              );
+              return (
+                <div key={location.id} className="rounded-xl border p-4">
+                  <div className="mb-4">
+                    <p className="font-semibold">{location.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {location.address ?? 'Dirección pendiente'}
+                    </p>
+                  </div>
+                  <div className="grid gap-5 xl:grid-cols-2">
+                    <div className="space-y-3">
+                      <p className="text-sm font-semibold">
+                        Número exclusivo de la sede
+                      </p>
+                      {whatsappOverride ? (
+                        <MetaEmbeddedSignup
+                          clinicId={data.clinic.id}
+                          locationId={location.id}
+                          locationName={location.name}
+                          connectionId={whatsappOverride.id}
+                          appId={data.integration.metaEmbeddedSignup.appId}
+                          configId={data.integration.metaEmbeddedSignup.configId}
+                          ready={data.integration.metaEmbeddedSignup.ready}
+                          connected
+                          phoneNumberId={whatsappOverride.phoneNumberId}
+                        />
+                      ) : canManage ? (
+                        <MetaEmbeddedSignup
+                          clinicId={data.clinic.id}
+                          locationId={location.id}
+                          locationName={location.name}
+                          appId={data.integration.metaEmbeddedSignup.appId}
+                          configId={data.integration.metaEmbeddedSignup.configId}
+                          ready={data.integration.metaEmbeddedSignup.ready}
+                          connected={false}
+                          phoneNumberId={null}
+                        />
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Esta sede utiliza el WhatsApp principal.
                         </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {connection.externalAccountId ?? 'primary'}
-                        </p>
-                      </div>
-                      {canManage ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          disabled={isPending}
-                          onClick={() =>
-                            runAction(() =>
-                              disconnectGoogleCalendar(
-                                data.clinic.id,
-                                connection.id,
-                              ),
-                            )
-                          }
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      <p className="text-sm font-semibold">Calendario de Google</p>
+                      {googleConnections.map((connection) => (
+                        <div
+                          key={connection.id}
+                          className="flex items-center gap-3 rounded-xl border p-3"
                         >
-                          Desconectar
-                        </Button>
+                          <CalendarDays className="size-4 text-primary" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">
+                              {connection.label ?? 'Google Calendar'}
+                            </p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {connection.externalAccountId ?? 'primary'}
+                            </p>
+                          </div>
+                          {canManage ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={isPending}
+                              onClick={() =>
+                                runAction(() =>
+                                  disconnectGoogleCalendar(
+                                    data.clinic.id,
+                                    connection.id,
+                                  ),
+                                )
+                              }
+                            >
+                              Desconectar
+                            </Button>
+                          ) : null}
+                        </div>
+                      ))}
+                      {canManage ? (
+                        <form
+                          action="/api/google-calendar/connect"
+                          method="get"
+                          className="grid gap-2 rounded-xl border p-3"
+                        >
+                          <input type="hidden" name="clinicId" value={data.clinic.id} />
+                          <input type="hidden" name="locationId" value={location.id} />
+                          <Input
+                            name="label"
+                            defaultValue={`Agenda · ${location.name}`}
+                            aria-label="Nombre de la conexión"
+                            required
+                          />
+                          <Input
+                            name="calendarId"
+                            defaultValue="primary"
+                            aria-label="Identificador del calendario"
+                            required
+                          />
+                          <Button type="submit" variant="outline">
+                            Conectar calendario
+                          </Button>
+                        </form>
                       ) : null}
                     </div>
-                  ))}
-                  {canManage ? (
-                    <form
-                      action="/api/google-calendar/connect"
-                      method="get"
-                      className="grid gap-2 rounded-xl border p-3"
-                    >
-                      <input
-                        type="hidden"
-                        name="clinicId"
-                        value={data.clinic.id}
-                      />
-                      <input
-                        type="hidden"
-                        name="locationId"
-                        value={location.id}
-                      />
-                      <Input
-                        name="label"
-                        defaultValue={`Agenda · ${location.name}`}
-                        aria-label="Nombre de la conexión"
-                        required
-                      />
-                      <Input
-                        name="calendarId"
-                        defaultValue="primary"
-                        aria-label="Identificador del calendario"
-                        required
-                      />
-                      <Button type="submit" variant="outline">
-                        Conectar otro calendario
-                      </Button>
-                    </form>
-                  ) : null}
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+              );
+            })}
+          </div>
+        </details>
       </div>
     </>
   );
