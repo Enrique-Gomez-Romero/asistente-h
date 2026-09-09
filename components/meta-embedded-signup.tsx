@@ -69,6 +69,7 @@ export function MetaEmbeddedSignup({
 
   useEffect(() => {
     if (!appId || !configId) return;
+    const markSdkReady = () => setSdkReady(Boolean(window.FB));
     const initialize = () => {
       window.FB?.init({
         appId,
@@ -76,8 +77,10 @@ export function MetaEmbeddedSignup({
         xfbml: true,
         version: 'v23.0',
       });
-      setSdkReady(Boolean(window.FB));
+      markSdkReady();
+      window.dispatchEvent(new Event('meta-facebook-sdk-ready'));
     };
+    window.addEventListener('meta-facebook-sdk-ready', markSdkReady);
     window.fbAsyncInit = initialize;
     if (window.FB) initialize();
     else if (!document.getElementById('facebook-jssdk')) {
@@ -90,7 +93,7 @@ export function MetaEmbeddedSignup({
       document.body.appendChild(script);
     }
     return () => {
-      delete window.fbAsyncInit;
+      window.removeEventListener('meta-facebook-sdk-ready', markSdkReady);
     };
   }, [appId, configId]);
 
