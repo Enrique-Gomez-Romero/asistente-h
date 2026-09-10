@@ -36,6 +36,7 @@ import {
 import {
   anonymizePatient as serverAnonymizePatient,
   createAppointment as serverCreateAppointment,
+  createFaq as serverCreateFaq,
   createLocation as serverCreateLocation,
   createProfessional as serverCreateProfessional,
   createService as serverCreateService,
@@ -127,6 +128,8 @@ const anonymizePatient = (...args: Parameters<typeof serverAnonymizePatient>) =>
 const createAppointment = (
   ...args: Parameters<typeof serverCreateAppointment>
 ) => callAppAction<ActionResult>('createAppointment', args);
+const createFaq = (...args: Parameters<typeof serverCreateFaq>) =>
+  callAppAction<ActionResult>('createFaq', args);
 const createLocation = (...args: Parameters<typeof serverCreateLocation>) =>
   callAppAction<ActionResult>('createLocation', args);
 const createProfessional = (
@@ -2080,6 +2083,19 @@ function BranchesView({
     );
   }
 
+  function faqSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      createFaq({
+        clinicId: data.clinic.id,
+        question: formText(form, 'question'),
+        answer: formText(form, 'answer'),
+      }),
+    );
+    event.currentTarget.reset();
+  }
+
   return (
     <>
       <PageHeading
@@ -3443,6 +3459,32 @@ function SettingsView({
               <p className="text-sm text-muted-foreground">
                 Todavía no hay respuestas frecuentes configuradas.
               </p>
+            ) : null}
+            {canManage ? (
+              <form onSubmit={faqSubmit} className="space-y-3 border-t pt-4">
+                <Field>
+                  <FieldLabel htmlFor="faq-question">Pregunta</FieldLabel>
+                  <Input
+                    id="faq-question"
+                    name="question"
+                    placeholder="¿Aceptan tarjeta?"
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="faq-answer">Respuesta</FieldLabel>
+                  <Textarea
+                    id="faq-answer"
+                    name="answer"
+                    placeholder="Sí, aceptamos efectivo, tarjeta y transferencia."
+                    rows={3}
+                    required
+                  />
+                </Field>
+                <Button type="submit" disabled={isPending}>
+                  Agregar respuesta
+                </Button>
+              </form>
             ) : null}
           </CardContent>
         </Card>

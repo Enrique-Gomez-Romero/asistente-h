@@ -56,6 +56,17 @@ const functionDeclarations = [
     },
   },
   {
+    name: 'search_faqs',
+    description:
+      'Consulta respuestas frecuentes autorizadas por la clínica para preguntas sobre pagos, políticas, horarios y requisitos.',
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'request_human_help',
     description:
       'Solicita que recepción tome la conversación cuando el paciente lo pide o la situación requiere juicio humano.',
@@ -107,7 +118,7 @@ async function generateGeminiReply(
 ): Promise<AssistantResult> {
   const clinic = await getClinicInformation(clinicId, locationId);
   if (!clinic) return generateDemoReply(message, clinicId, locationId);
-  const systemInstruction = `Eres el asistente virtual de ${clinic.name}. Responde en español mexicano, con calidez y brevedad. Identifícate como asistente virtual cuando sea natural. Usa exclusivamente las herramientas para precios, servicios y disponibilidad; nunca inventes datos ni confirmes una cita sin que el sistema la haya creado. No diagnostiques ni indiques medicamentos. Ante sangrado severo, dificultad para respirar, trauma importante o dolor insoportable, recomienda atención de emergencia inmediata y solicita apoyo humano. Si falta información, pregunta solo lo indispensable. Fecha actual: ${new Intl.DateTimeFormat('en-CA', { timeZone: clinic.timezone }).format(new Date())}, zona horaria ${clinic.timezone}.`;
+  const systemInstruction = `Eres el asistente virtual de ${clinic.name}. Responde en español mexicano, con calidez y brevedad. Identifícate como asistente virtual cuando sea natural. Usa exclusivamente las herramientas para precios, servicios, disponibilidad y preguntas frecuentes; nunca inventes datos ni confirmes una cita sin que el sistema la haya creado. No diagnostiques ni indiques medicamentos. Ante sangrado severo, dificultad para respirar, trauma importante o dolor insoportable, recomienda atención de emergencia inmediata y solicita apoyo humano. Si falta información, pregunta solo lo indispensable. Fecha actual: ${new Intl.DateTimeFormat('en-CA', { timeZone: clinic.timezone }).format(new Date())}, zona horaria ${clinic.timezone}.`;
   const contents: GeminiContent[] = [
     { role: 'user', parts: [{ text: message }] },
   ];
@@ -229,6 +240,14 @@ async function executeTool(
   if (name === 'get_clinic_information') {
     return getClinicInformation(clinicId, locationId);
   }
+  if (name === 'search_faqs') {
+    const faqs = await env.DB.prepare(
+      `SELECT question, answer FROM faq_items WHERE clinic_id = ? AND active = 1 ORDER BY question LIMIT 20`,
+    )
+      .bind(clinicId)
+      .all<{ question: string; answer: string }>();
+    return faqs.results;
+  }
   if (name === 'request_human_help')
     return { escalated: true, message: 'Recepción fue notificada.' };
   return { error: 'Herramienta no disponible.' };
@@ -258,6 +277,26 @@ async function generateDemoReply(
         'Claro. Voy a pasar esta conversación a recepción para que una persona continúe contigo.',
       mode: 'demo',
       toolsUsed: ['request_human_help'],
+    };
+  }
+  const faqs = await env.DB.prepare(
+    `SELECT question, answer FROM faq_items WHERE clinic_id = ? AND active = 1 ORDER BY question LIMIT 20`,
+  )
+    .bind(clinicId)
+    .all<{ question: string; answer: string }>();
+  const faqTerms = normalized
+    .split(/[^a-záéíóúüñ0-9]+/i)
+    .filter((term) => term.length >= 4);
+  const matchedFaq = faqs.results.find((faq) => {
+    const question = faq.question.toLocaleLowerCase('es-MX');
+    const matches = faqTerms.filter((term) => question.includes(term)).length;
+    return matches >= Math.min(2, faqTerms.length);
+  });
+  if (matchedFaq) {
+    return {
+      reply: matchedFaq.answer,
+      mode: 'demo',
+      toolsUsed: ['search_faqs'],
     };
   }
   const services = await getActiveServices(clinicId);

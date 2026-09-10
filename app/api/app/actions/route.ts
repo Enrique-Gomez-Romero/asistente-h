@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import {
   anonymizePatient,
   createAppointment,
+  createFaq,
   createLocation,
   createOrganization,
   createProfessional,

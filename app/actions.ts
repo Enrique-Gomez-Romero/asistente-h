@@ -332,6 +332,35 @@ export async function createService(input: {
   });
 }
 
+export async function createFaq(input: {
+  clinicId: string;
+  question: string;
+  answer: string;
+}): Promise<ActionResult> {
+  return actionResult(async () => {
+    await ensureDatabase();
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    const question = input.question.trim();
+    const answer = input.answer.trim();
+    if (question.length < 5 || answer.length < 5)
+      throw new Error('Escribe una pregunta y una respuesta completas.');
+    const id = `faq_${crypto.randomUUID()}`;
+    await env.DB.prepare(
+      `INSERT INTO faq_items (id, clinic_id, question, answer, active) VALUES (?, ?, ?, ?, 1)`,
+    )
+      .bind(id, input.clinicId, question, answer)
+      .run();
+    await logAudit(input.clinicId, access.user.email, 'create', 'faq', id, {
+      question,
+    });
+    revalidatePath('/app');
+    return { ok: true, message: 'Respuesta frecuente agregada.' };
+  });
+}
+
 export async function createLocation(input: {
   clinicId: string;
   name: string;
