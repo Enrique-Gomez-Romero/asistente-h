@@ -210,6 +210,155 @@ export async function createAppointment(
   });
 }
 
+export async function updateAppointment(
+  input: AppointmentInput & { appointmentId: string },
+): Promise<ActionResult> {
+  return actionResult(async () => {
+    await ensureDatabase();
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+      'staff',
+    ]);
+    const patientName = input.patientName.trim();
+    const phone = normalizePhone(input.phone);
+    if (patientName.length < 2 || !phone)
+      throw new Error('Escribe el nombre y un teléfono válido.');
+    const [service, doctor, clinic, location, existing] = await Promise.all([
+      env.DB.prepare(
+        'SELECT id, duration_minutes AS durationMinutes FROM services WHERE id = ? AND clinic_id = ? AND active = 1',
+      )
+        .bind(input.serviceId, input.clinicId)
+        .first<{ id: string; durationMinutes: number }>(),
+      env.DB.prepare(
+        'SELECT id FROM doctors WHERE id = ? AND clinic_id = ? AND active = 1',
+      )
+        .bind(input.doctorId, input.clinicId)
+        .first<{ id: string }>(),
+      env.DB.prepare('SELECT timezone FROM clinics WHERE id = ?')
+        .bind(input.clinicId)
+        .first<{ timezone: string }>(),
+      env.DB.prepare(
+        `SELECT l.id FROM locations l WHERE l.id = ? AND l.clinic_id = ? AND l.active = 1 AND (
+          ? IN ('owner', 'admin') OR ? = 1 OR EXISTS (
+            SELECT 1 FROM memberships m JOIN membership_locations ml ON ml.membership_id = m.id
+            WHERE m.clinic_id = l.clinic_id AND m.user_id = ? AND ml.location_id = l.id AND m.status = 'active'
+          )
+        )`,
+      )
+        .bind(
+          input.locationId,
+          input.clinicId,
+          access.role,
+          access.isPlatformAdmin ? 1 : 0,
+          access.user.userId,
+        )
+        .first<{ id: string }>(),
+      env.DB.prepare(
+        'SELECT id, patient_id AS patientId FROM appointments WHERE id = ? AND clinic_id = ?',
+      )
+        .bind(input.appointmentId, input.clinicId)
+        .first<{ id: string; patientId: string | null }>(),
+    ]);
+    if (!service || !doctor || !clinic || !location || !existing)
+      throw new Error(
+        'La sucursal, el servicio, el profesional o la cita ya no están disponibles.',
+      );
+    const doctorLocation = await env.DB.prepare(
+      'SELECT id FROM doctor_locations WHERE clinic_id = ? AND doctor_id = ? AND location_id = ? AND active = 1',
+    )
+      .bind(input.clinicId, input.doctorId, input.locationId)
+      .first();
+    if (!doctorLocation)
+      throw new Error(
+        'Ese profesional no está asignado a la sucursal elegida.',
+      );
+    const startsAt = parseLocalDate(input.startsAtLocal, clinic.timezone);
+    if (!startsAt || Number.isNaN(startsAt.getTime()))
+      throw new Error('Selecciona una fecha y hora válidas.');
+    const endsAt = appointmentEnd(startsAt, service.durationMinutes);
+    const conflict = await env.DB.prepare(
+      `SELECT id FROM appointments
+       WHERE clinic_id = ? AND doctor_id = ? AND id != ?
+         AND status NOT IN ('cancelled', 'no_show')
+         AND starts_at < ? AND ends_at > ?`,
+    )
+      .bind(
+        input.clinicId,
+        input.doctorId,
+        input.appointmentId,
+        endsAt.toISOString(),
+        startsAt.toISOString(),
+      )
+      .first();
+    if (conflict)
+      throw new Error('Ese horario ya está ocupado. Elige otro horario.');
+
+    const patient = await env.DB.prepare(
+      'SELECT id FROM patients WHERE clinic_id = ? AND phone = ?',
+    )
+      .bind(input.clinicId, phone)
+      .first<{ id: string }>();
+    const now = new Date().toISOString();
+    const patientId = patient?.id ?? `pat_${crypto.randomUUID()}`;
+    const statements = [];
+    if (!patient) {
+      statements.push(
+        env.DB.prepare(
+          'INSERT INTO patients (id, clinic_id, full_name, phone, email, notes, last_visit_at, marketing_opt_in, consent_at, consent_source, created_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, NULL, NULL, ?)',
+        ).bind(
+          patientId,
+          input.clinicId,
+          patientName,
+          phone,
+          input.email?.trim() || null,
+          now,
+        ),
+      );
+    } else {
+      statements.push(
+        env.DB.prepare(
+          'UPDATE patients SET full_name = ?, email = COALESCE(?, email) WHERE id = ? AND clinic_id = ?',
+        ).bind(
+          patientName,
+          input.email?.trim() || null,
+          patientId,
+          input.clinicId,
+        ),
+      );
+    }
+    statements.push(
+      env.DB.prepare(
+        'UPDATE appointments SET location_id = ?, patient_id = ?, doctor_id = ?, service_id = ?, starts_at = ?, ends_at = ?, notes = ? WHERE id = ? AND clinic_id = ?',
+      ).bind(
+        input.locationId,
+        patientId,
+        input.doctorId,
+        input.serviceId,
+        startsAt.toISOString(),
+        endsAt.toISOString(),
+        input.notes?.trim() || null,
+        input.appointmentId,
+        input.clinicId,
+      ),
+    );
+    statements.push(
+      auditStatement(
+        input.clinicId,
+        access.user.email,
+        'update',
+        'appointment',
+        input.appointmentId,
+        { patientName, startsAt: startsAt.toISOString() },
+      ),
+    );
+    await env.DB.batch(statements);
+    await syncAppointmentToGoogleCalendar(input.clinicId, input.appointmentId);
+    revalidatePath('/app');
+    return { ok: true, message: 'Cita actualizada correctamente.' };
+  });
+}
+
 export async function setAppointmentStatus(
   id: string,
   status: string,

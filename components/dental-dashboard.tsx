@@ -50,6 +50,7 @@ import {
   toggleBotPaused as serverToggleBotPaused,
   toggleService as serverToggleService,
   updateBusinessHours as serverUpdateBusinessHours,
+  updateAppointment as serverUpdateAppointment,
   updateFaq as serverUpdateFaq,
   updateLocation as serverUpdateLocation,
   updateMemberLocations as serverUpdateMemberLocations,
@@ -165,6 +166,9 @@ const toggleService = (...args: Parameters<typeof serverToggleService>) =>
 const updateBusinessHours = (
   ...args: Parameters<typeof serverUpdateBusinessHours>
 ) => callAppAction<ActionResult>('updateBusinessHours', args);
+const updateAppointment = (
+  ...args: Parameters<typeof serverUpdateAppointment>
+) => callAppAction<ActionResult>('updateAppointment', args);
 const updateFaq = (...args: Parameters<typeof serverUpdateFaq>) =>
   callAppAction<ActionResult>('updateFaq', args);
 const updateLocation = (...args: Parameters<typeof serverUpdateLocation>) =>
@@ -235,6 +239,8 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
   const router = useRouter();
   const [view, setView] = useState<View>('agenda');
   const [appointmentOpen, setAppointmentOpen] = useState(false);
+  const [editingAppointment, setEditingAppointment] =
+    useState<AppointmentRecord | null>(null);
   const [serviceOpen, setServiceOpen] = useState(false);
   const [notice, setNotice] = useState<ActionResult | null>(null);
   const currentMember = data.saas.members.find(
@@ -475,6 +481,7 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
               <AgendaView
                 data={scopedData}
                 onOpenInbox={() => setView('inbox')}
+                onEditAppointment={setEditingAppointment}
                 runAction={runAction}
                 isPending={isPending || !canOperate}
               />
@@ -553,6 +560,17 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
         setOpen={setAppointmentOpen}
         data={data}
         selectedLocationId={selectedLocationId}
+        runAction={runAction}
+        isPending={isPending}
+      />
+      <EditAppointmentDialog
+        key={editingAppointment?.id ?? 'no-appointment'}
+        open={Boolean(editingAppointment)}
+        setOpen={(open) => {
+          if (!open) setEditingAppointment(null);
+        }}
+        appointment={editingAppointment}
+        data={data}
         runAction={runAction}
         isPending={isPending}
       />
@@ -646,11 +664,13 @@ function PageHeading({
 function AgendaView({
   data,
   onOpenInbox,
+  onEditAppointment,
   runAction,
   isPending,
 }: {
   data: DashboardData;
   onOpenInbox: () => void;
+  onEditAppointment: (appointment: AppointmentRecord) => void;
   runAction: (operation: () => Promise<ActionResult>) => void;
   isPending: boolean;
 }) {
@@ -731,6 +751,7 @@ function AgendaView({
               <AppointmentRow
                 key={appointment.id}
                 appointment={appointment}
+                onEdit={() => onEditAppointment(appointment)}
                 onStatus={(status) =>
                   runAction(() => setAppointmentStatus(appointment.id, status))
                 }
@@ -789,15 +810,17 @@ function Metric({
 
 function AppointmentRow({
   appointment,
+  onEdit,
   onStatus,
   disabled,
 }: {
   appointment: AppointmentRecord;
+  onEdit: () => void;
   onStatus: (status: string) => void;
   disabled: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[64px_1fr] items-center gap-3 py-4 sm:grid-cols-[78px_42px_1fr_auto]">
+    <div className="grid grid-cols-[64px_1fr] items-center gap-3 py-4 sm:grid-cols-[78px_42px_1fr_auto_auto]">
       <div>
         <p className="text-sm font-bold tabular-nums">
           {formatTime(appointment.startsAt)}
@@ -823,19 +846,30 @@ function AppointmentRow({
           {appointment.serviceName} · {appointment.doctorName}
         </p>
       </div>
-      <NativeSelect
-        size="sm"
-        value={appointment.status}
-        disabled={disabled}
-        onChange={(event) => onStatus(event.target.value)}
-        className="col-start-2 w-full sm:col-start-auto sm:w-[132px]"
-      >
-        {Object.entries(statusLabels).map(([value, label]) => (
-          <NativeSelectOption key={value} value={value}>
-            {label}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
+      <div className="col-start-2 flex items-center gap-2 sm:col-start-auto">
+        <NativeSelect
+          size="sm"
+          value={appointment.status}
+          disabled={disabled}
+          onChange={(event) => onStatus(event.target.value)}
+          className="w-full sm:w-[132px]"
+        >
+          {Object.entries(statusLabels).map(([value, label]) => (
+            <NativeSelectOption key={value} value={value}>
+              {label}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={disabled}
+          onClick={onEdit}
+        >
+          Editar
+        </Button>
+      </div>
     </div>
   );
 }
@@ -4166,6 +4200,200 @@ function NewAppointmentDialog({
   );
 }
 
+function EditAppointmentDialog({
+  open,
+  setOpen,
+  appointment,
+  data,
+  runAction,
+  isPending,
+}: {
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  appointment: AppointmentRecord | null;
+  data: DashboardData;
+  runAction: (
+    operation: () => Promise<ActionResult>,
+    onSuccess?: () => void,
+  ) => void;
+  isPending: boolean;
+}) {
+  const [locationId, setLocationId] = useState(
+    appointment?.locationId ?? data.locations[0]?.id ?? '',
+  );
+  if (!appointment) return null;
+  const availableDoctors = data.doctors.filter(
+    (doctor) => doctor.active && doctor.locationIds.includes(locationId),
+  );
+  function submit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(
+      () =>
+        updateAppointment({
+          appointmentId: appointment.id,
+          clinicId: data.clinic.id,
+          locationId: formText(form, 'locationId'),
+          patientName: formText(form, 'patientName'),
+          phone: formText(form, 'phone'),
+          email: formText(form, 'email'),
+          serviceId: formText(form, 'serviceId'),
+          doctorId: formText(form, 'doctorId'),
+          startsAtLocal: formText(form, 'startsAtLocal'),
+          notes: formText(form, 'notes'),
+        }),
+      () => setOpen(false),
+    );
+  }
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Editar cita</DialogTitle>
+          <DialogDescription>
+            Puedes cambiar paciente, sede, profesional, servicio, fecha, hora
+            y notas. Se volverá a validar que no exista un traslape.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit}>
+          <FieldGroup>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="editAppointmentLocationId">
+                  Sucursal
+                </FieldLabel>
+                <NativeSelect
+                  id="editAppointmentLocationId"
+                  name="locationId"
+                  value={locationId}
+                  onChange={(event) => setLocationId(event.target.value)}
+                  required
+                  className="w-full"
+                >
+                  {data.locations.map((location) => (
+                    <NativeSelectOption key={location.id} value={location.id}>
+                      {location.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="editAppointmentPatientName">
+                  Nombre del paciente
+                </FieldLabel>
+                <Input
+                  id="editAppointmentPatientName"
+                  name="patientName"
+                  defaultValue={appointment.patientName}
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="editAppointmentPhone">WhatsApp</FieldLabel>
+                <Input
+                  id="editAppointmentPhone"
+                  name="phone"
+                  defaultValue={appointment.patientPhone ?? ''}
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="editAppointmentEmail">
+                  Correo opcional
+                </FieldLabel>
+                <Input
+                  id="editAppointmentEmail"
+                  name="email"
+                  type="email"
+                  placeholder="paciente@correo.com"
+                />
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="editAppointmentServiceId">
+                  Servicio
+                </FieldLabel>
+                <NativeSelect
+                  id="editAppointmentServiceId"
+                  name="serviceId"
+                  defaultValue={appointment.serviceId ?? undefined}
+                  required
+                  className="w-full"
+                >
+                  {data.services
+                    .filter((item) => item.active)
+                    .map((service) => (
+                      <NativeSelectOption key={service.id} value={service.id}>
+                        {service.name} · {service.durationMinutes} min
+                      </NativeSelectOption>
+                    ))}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="editAppointmentDoctorId">
+                  Profesional
+                </FieldLabel>
+                <NativeSelect
+                  id="editAppointmentDoctorId"
+                  name="doctorId"
+                  defaultValue={appointment.doctorId}
+                  required
+                  className="w-full"
+                >
+                  {availableDoctors.map((doctor) => (
+                    <NativeSelectOption key={doctor.id} value={doctor.id}>
+                      {doctor.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="editAppointmentStartsAtLocal">
+                Fecha y hora
+              </FieldLabel>
+              <Input
+                id="editAppointmentStartsAtLocal"
+                name="startsAtLocal"
+                type="datetime-local"
+                defaultValue={localDateTimeValue(
+                  appointment.startsAt,
+                  data.clinic.timezone,
+                )}
+                required
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="editAppointmentNotes">
+                Notas internas
+              </FieldLabel>
+              <Textarea
+                id="editAppointmentNotes"
+                name="notes"
+                defaultValue={appointment.notes ?? ''}
+                placeholder="Información relevante para recepción"
+              />
+            </Field>
+          </FieldGroup>
+          <DialogFooter className="mt-5">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={isPending || !availableDoctors.length}>
+              {isPending ? 'Guardando…' : 'Guardar cambios'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function NewServiceDialog({
   open,
   setOpen,
@@ -4374,6 +4602,21 @@ function defaultAppointmentDate(timeZone: string) {
   const value = new Date(`${today}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + 1);
   return `${value.toISOString().slice(0, 10)}T10:00`;
+}
+function localDateTimeValue(value: string, timeZone: string) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(value));
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
 }
 function formatTime(value: string) {
   return new Intl.DateTimeFormat('es-MX', {
