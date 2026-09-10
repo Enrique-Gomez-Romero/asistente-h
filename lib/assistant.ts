@@ -71,6 +71,7 @@ const functionDeclarations = [
 export async function generateAssistantReply(
   message: string,
   clinicId: string,
+  locationId?: string | null,
 ): Promise<AssistantResult> {
   await ensureDatabase();
   if (!(await hasAssistantCapacity(clinicId))) {
@@ -83,16 +84,16 @@ export async function generateAssistantReply(
   }
   let result: AssistantResult;
   if (!process.env.GEMINI_API_KEY) {
-    result = await generateDemoReply(message, clinicId);
+    result = await generateDemoReply(message, clinicId, locationId);
   } else {
     try {
-      result = await generateGeminiReply(message, clinicId);
+      result = await generateGeminiReply(message, clinicId, locationId);
     } catch (error) {
       console.error(
         'Gemini assistant failed, using safe demo fallback',
         error instanceof Error ? error.message : error,
       );
-      result = await generateDemoReply(message, clinicId);
+      result = await generateDemoReply(message, clinicId, locationId);
     }
   }
   await recordUsage(clinicId, 'ai_request');
@@ -102,9 +103,10 @@ export async function generateAssistantReply(
 async function generateGeminiReply(
   message: string,
   clinicId: string,
+  locationId?: string | null,
 ): Promise<AssistantResult> {
-  const clinic = await getClinicInformation(clinicId);
-  if (!clinic) return generateDemoReply(message, clinicId);
+  const clinic = await getClinicInformation(clinicId, locationId);
+  if (!clinic) return generateDemoReply(message, clinicId, locationId);
   const systemInstruction = `Eres el asistente virtual de ${clinic.name}. Responde en español mexicano, con calidez y brevedad. Identifícate como asistente virtual cuando sea natural. Usa exclusivamente las herramientas para precios, servicios y disponibilidad; nunca inventes datos ni confirmes una cita sin que el sistema la haya creado. No diagnostiques ni indiques medicamentos. Ante sangrado severo, dificultad para respirar, trauma importante o dolor insoportable, recomienda atención de emergencia inmediata y solicita apoyo humano. Si falta información, pregunta solo lo indispensable. Fecha actual: ${new Intl.DateTimeFormat('en-CA', { timeZone: clinic.timezone }).format(new Date())}, zona horaria ${clinic.timezone}.`;
   const contents: GeminiContent[] = [
     { role: 'user', parts: [{ text: message }] },
@@ -144,6 +146,7 @@ async function generateGeminiReply(
         name,
         call.functionCall.args ?? {},
         clinicId,
+        locationId,
       );
       outputs.push({
         functionResponse: {
@@ -192,6 +195,7 @@ async function executeTool(
   name: string,
   args: Record<string, unknown>,
   clinicId: string,
+  locationId?: string | null,
 ) {
   if (name === 'list_services') {
     const services = await getActiveServices(clinicId);
@@ -209,15 +213,21 @@ async function executeTool(
       typeof args.doctor_id === 'string' ? args.doctor_id : undefined;
     const serviceId =
       typeof args.service_id === 'string' ? args.service_id : undefined;
-    const clinic = await getClinicInformation(clinicId);
+    const clinic = await getClinicInformation(clinicId, locationId);
     return {
       date,
       timezone: clinic?.timezone,
-      slots: await getAvailableSlots(clinicId, date, doctorId, serviceId),
+      slots: await getAvailableSlots(
+        clinicId,
+        date,
+        doctorId,
+        serviceId,
+        locationId ?? undefined,
+      ),
     };
   }
   if (name === 'get_clinic_information') {
-    return getClinicInformation(clinicId);
+    return getClinicInformation(clinicId, locationId);
   }
   if (name === 'request_human_help')
     return { escalated: true, message: 'Recepción fue notificada.' };
@@ -227,6 +237,7 @@ async function executeTool(
 async function generateDemoReply(
   message: string,
   clinicId: string,
+  locationId?: string | null,
 ): Promise<AssistantResult> {
   const normalized = message.toLocaleLowerCase('es-MX');
   if (
@@ -297,11 +308,17 @@ async function generateDemoReply(
       maximumFractionDigits: 0,
     }).format(matched.priceCents / 100);
     if (/horario|cita|disponib|mañana/.test(normalized)) {
-      const clinic = await getClinicInformation(clinicId);
+      const clinic = await getClinicInformation(clinicId, locationId);
       const date = tomorrowInTimeZone(
         clinic?.timezone ?? 'America/Mexico_City',
       );
-      const slots = await getAvailableSlots(clinicId, date);
+      const slots = await getAvailableSlots(
+        clinicId,
+        date,
+        undefined,
+        undefined,
+        locationId ?? undefined,
+      );
       const labels = slots
         .slice(0, 3)
         .map((value) =>
@@ -324,14 +341,14 @@ async function generateDemoReply(
   if (
     /ubicaci[oó]n|direcci[oó]n|d[oó]nde|tarjeta|pago|horario/.test(normalized)
   ) {
-    const clinic = await getClinicInformation(clinicId);
+    const clinic = await getClinicInformation(clinicId, locationId);
     return {
       reply: `${clinic?.address ? `Estamos en ${clinic.address}. ` : ''}${clinic?.hoursText ?? 'Nuestro horario está disponible con recepción.'} Aceptamos tarjeta, transferencia y efectivo.`,
       mode: 'demo',
       toolsUsed: ['get_clinic_information'],
     };
   }
-  const clinic = await getClinicInformation(clinicId);
+  const clinic = await getClinicInformation(clinicId, locationId);
   return {
     reply: `¡Hola! Soy el asistente virtual de ${clinic?.name ?? 'nuestro negocio'}. Puedo ayudarte con servicios, costos, horarios o para agendar una cita. ¿Qué necesitas?`,
     mode: 'demo',
@@ -397,13 +414,16 @@ async function hasAssistantCapacity(clinicId: string): Promise<boolean> {
     }>();
   return Boolean(
     row &&
-      new Date(row.periodEnd).getTime() >= Date.now() &&
-      Number(row.usedValue) < Number(row.limitValue) &&
-      Number(row.conversationValue) <= Number(row.conversationLimit),
+    new Date(row.periodEnd).getTime() >= Date.now() &&
+    Number(row.usedValue) < Number(row.limitValue) &&
+    Number(row.conversationValue) <= Number(row.conversationLimit),
   );
 }
 
-async function getClinicInformation(clinicId: string): Promise<null | {
+async function getClinicInformation(
+  clinicId: string,
+  locationId?: string | null,
+): Promise<null | {
   name: string;
   address: string | null;
   phone: string | null;
@@ -422,10 +442,23 @@ async function getClinicInformation(clinicId: string): Promise<null | {
       timezone: string;
     }>();
   if (!clinic) return null;
+  const location = locationId
+    ? await env.DB.prepare(
+        'SELECT address, phone, timezone FROM locations WHERE id = ? AND clinic_id = ? AND active = 1',
+      )
+        .bind(locationId, clinicId)
+        .first<{
+          address: string | null;
+          phone: string | null;
+          timezone: string;
+        }>()
+    : null;
   const hours = await env.DB.prepare(
-    'SELECT day_of_week AS dayOfWeek, opens_at AS opensAt, closes_at AS closesAt, active FROM business_hours WHERE clinic_id = ? ORDER BY day_of_week',
+    locationId
+      ? 'SELECT day_of_week AS dayOfWeek, opens_at AS opensAt, closes_at AS closesAt, active FROM business_hours WHERE clinic_id = ? AND location_id = ? ORDER BY day_of_week'
+      : 'SELECT day_of_week AS dayOfWeek, opens_at AS opensAt, closes_at AS closesAt, active FROM business_hours WHERE clinic_id = ? AND location_id = (SELECT id FROM locations WHERE clinic_id = ? AND active = 1 ORDER BY id LIMIT 1) ORDER BY day_of_week',
   )
-    .bind(clinicId)
+    .bind(...(locationId ? [clinicId, locationId] : [clinicId, clinicId]))
     .all<{
       dayOfWeek: number;
       opensAt: string;
@@ -449,6 +482,9 @@ async function getClinicInformation(clinicId: string): Promise<null | {
     .join(', ');
   return {
     ...clinic,
+    address: location?.address ?? clinic.address,
+    phone: location?.phone ?? clinic.phone,
+    timezone: location?.timezone ?? clinic.timezone,
     hoursText: activeHours
       ? `Atendemos ${activeHours}.`
       : 'El horario está pendiente de configuración.',

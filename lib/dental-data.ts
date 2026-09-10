@@ -361,18 +361,22 @@ export async function getDashboardData(
     !['owner', 'admin'].includes(saas.activeOrganization?.role ?? '');
   const allowedLocationIds = new Set(currentMember?.locationIds ?? []);
   const visibleLocations = restrictLocations
-    ? locations.results.filter((location) => allowedLocationIds.has(location.id))
+    ? locations.results.filter((location) =>
+        allowedLocationIds.has(location.id),
+      )
     : locations.results;
   const visibleAppointments = restrictLocations
     ? appointments.results.filter(
         (appointment) =>
-          appointment.locationId && allowedLocationIds.has(appointment.locationId),
+          appointment.locationId &&
+          allowedLocationIds.has(appointment.locationId),
       )
     : appointments.results;
   const visibleConversations = restrictLocations
     ? conversations.results.filter(
         (conversation) =>
-          conversation.locationId && allowedLocationIds.has(conversation.locationId),
+          conversation.locationId &&
+          allowedLocationIds.has(conversation.locationId),
       )
     : conversations.results;
 
@@ -386,7 +390,9 @@ export async function getDashboardData(
       .filter(
         (doctor) =>
           !restrictLocations ||
-          doctor.locationIds.some((locationId) => allowedLocationIds.has(locationId)),
+          doctor.locationIds.some((locationId) =>
+            allowedLocationIds.has(locationId),
+          ),
       ),
     services: services.results,
     patients: patients.results,
@@ -417,7 +423,9 @@ export async function getDashboardData(
         secretStorageReady: integrationCredentialEncryptionConfigured(),
       },
       invitationEmailReady: Boolean(
-        process.env.RESEND_API_KEY && process.env.EMAIL_FROM && process.env.PUBLIC_APP_URL,
+        process.env.RESEND_API_KEY &&
+        process.env.EMAIL_FROM &&
+        process.env.PUBLIC_APP_URL,
       ),
       mode: process.env.GEMINI_API_KEY ? 'production' : 'demo',
     },
@@ -455,6 +463,7 @@ export async function getAvailableSlots(
   date: string,
   doctorId?: string,
   serviceId?: string,
+  locationId?: string,
 ): Promise<string[]> {
   await ensureDatabase();
   const clinic = await env.DB.prepare(
@@ -465,41 +474,77 @@ export async function getAvailableSlots(
   if (!clinic || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
   const dayOfWeek = new Date(`${date}T12:00:00Z`).getUTCDay();
   const doctor = doctorId
-    ? await env.DB.prepare(
-        `SELECT id FROM doctors WHERE id = ? AND clinic_id = ? AND active = 1`,
-      )
-        .bind(doctorId, clinicId)
-        .first<{ id: string }>()
-    : await env.DB.prepare(
-        `SELECT id FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 1`,
-      )
-        .bind(clinicId)
-        .first<{ id: string }>();
+    ? locationId
+      ? await env.DB.prepare(
+          `SELECT d.id FROM doctors d JOIN doctor_locations dl ON dl.doctor_id = d.id AND dl.clinic_id = d.clinic_id AND dl.location_id = ? AND dl.active = 1 WHERE d.id = ? AND d.clinic_id = ? AND d.active = 1`,
+        )
+          .bind(locationId, doctorId, clinicId)
+          .first<{ id: string }>()
+      : await env.DB.prepare(
+          `SELECT id FROM doctors WHERE id = ? AND clinic_id = ? AND active = 1`,
+        )
+          .bind(doctorId, clinicId)
+          .first<{ id: string }>()
+    : locationId
+      ? await env.DB.prepare(
+          `SELECT d.id FROM doctors d JOIN doctor_locations dl ON dl.doctor_id = d.id AND dl.clinic_id = d.clinic_id AND dl.location_id = ? AND dl.active = 1 WHERE d.clinic_id = ? AND d.active = 1 ORDER BY d.name LIMIT 1`,
+        )
+          .bind(locationId, clinicId)
+          .first<{ id: string }>()
+      : await env.DB.prepare(
+          `SELECT id FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 1`,
+        )
+          .bind(clinicId)
+          .first<{ id: string }>();
   if (!doctor) return [];
-  const doctorHours = await env.DB.prepare(
-    `SELECT opens_at AS opensAt, closes_at AS closesAt, NULL AS breakStart, NULL AS breakEnd, active FROM doctor_hours WHERE clinic_id = ? AND doctor_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1`,
-  )
-    .bind(clinicId, doctor.id, dayOfWeek)
-    .first<{
-      opensAt: string;
-      closesAt: string;
-      breakStart: string | null;
-      breakEnd: string | null;
-      active: number;
-    }>();
+  const doctorHours = locationId
+    ? await env.DB.prepare(
+        `SELECT opens_at AS opensAt, closes_at AS closesAt, NULL AS breakStart, NULL AS breakEnd, active FROM doctor_hours WHERE clinic_id = ? AND doctor_id = ? AND location_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1`,
+      )
+        .bind(clinicId, doctor.id, locationId, dayOfWeek)
+        .first<{
+          opensAt: string;
+          closesAt: string;
+          breakStart: string | null;
+          breakEnd: string | null;
+          active: number;
+        }>()
+    : await env.DB.prepare(
+        `SELECT opens_at AS opensAt, closes_at AS closesAt, NULL AS breakStart, NULL AS breakEnd, active FROM doctor_hours WHERE clinic_id = ? AND doctor_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1`,
+      )
+        .bind(clinicId, doctor.id, dayOfWeek)
+        .first<{
+          opensAt: string;
+          closesAt: string;
+          breakStart: string | null;
+          breakEnd: string | null;
+          active: number;
+        }>();
   const hours =
     doctorHours ??
-    (await env.DB.prepare(
-      'SELECT opens_at AS opensAt, closes_at AS closesAt, break_start AS breakStart, break_end AS breakEnd, active FROM business_hours WHERE clinic_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1',
-    )
-      .bind(clinicId, dayOfWeek)
-      .first<{
-        opensAt: string;
-        closesAt: string;
-        breakStart: string | null;
-        breakEnd: string | null;
-        active: number;
-      }>());
+    (locationId
+      ? await env.DB.prepare(
+          'SELECT opens_at AS opensAt, closes_at AS closesAt, break_start AS breakStart, break_end AS breakEnd, active FROM business_hours WHERE clinic_id = ? AND location_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1',
+        )
+          .bind(clinicId, locationId, dayOfWeek)
+          .first<{
+            opensAt: string;
+            closesAt: string;
+            breakStart: string | null;
+            breakEnd: string | null;
+            active: number;
+          }>()
+      : await env.DB.prepare(
+          'SELECT opens_at AS opensAt, closes_at AS closesAt, break_start AS breakStart, break_end AS breakEnd, active FROM business_hours WHERE clinic_id = ? AND day_of_week = ? AND active = 1 ORDER BY opens_at LIMIT 1',
+        )
+          .bind(clinicId, dayOfWeek)
+          .first<{
+            opensAt: string;
+            closesAt: string;
+            breakStart: string | null;
+            breakEnd: string | null;
+            active: number;
+          }>());
   if (!hours) return [];
   const service = serviceId
     ? await env.DB.prepare(

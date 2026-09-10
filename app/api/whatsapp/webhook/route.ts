@@ -255,14 +255,24 @@ async function processIncomingMessage(
       .bind(patient.id, clinicId, name, phone, now)
       .run();
   }
-  let conversation = await env.DB.prepare(
-    `SELECT id, bot_paused AS botPaused FROM conversations WHERE clinic_id = ? AND patient_id = ? AND location_id IS ? AND status = 'open' ORDER BY last_message_at DESC LIMIT 1`,
-  )
-    .bind(clinicId, patient.id, locationId)
-    .first<{ id: string; botPaused: number }>();
+  let conversation = locationId
+    ? await env.DB.prepare(
+        `SELECT id, location_id AS locationId, bot_paused AS botPaused FROM conversations WHERE clinic_id = ? AND patient_id = ? AND location_id = ? AND status = 'open' ORDER BY last_message_at DESC LIMIT 1`,
+      )
+        .bind(clinicId, patient.id, locationId)
+        .first<{ id: string; locationId: string | null; botPaused: number }>()
+    : await env.DB.prepare(
+        `SELECT id, location_id AS locationId, bot_paused AS botPaused FROM conversations WHERE clinic_id = ? AND patient_id = ? AND status = 'open' ORDER BY last_message_at DESC LIMIT 1`,
+      )
+        .bind(clinicId, patient.id)
+        .first<{ id: string; locationId: string | null; botPaused: number }>();
   const isNewConversation = !conversation;
   if (!conversation) {
-    conversation = { id: `conv_${crypto.randomUUID()}`, botPaused: 0 };
+    conversation = {
+      id: `conv_${crypto.randomUUID()}`,
+      locationId,
+      botPaused: 0,
+    };
     await env.DB.prepare(
       `INSERT INTO conversations (id, clinic_id, location_id, patient_id, channel, status, assigned_to, bot_paused, unread_count, last_message_at) VALUES (?, ?, ?, ?, 'whatsapp', 'open', NULL, 0, 1, ?)`,
     )
@@ -301,7 +311,7 @@ async function processIncomingMessage(
     try {
       await storeAndSendReply(
         clinicId,
-        locationId,
+        conversation.locationId ?? locationId,
         conversation.id,
         phone,
         '¡Hola! Soy Asistente H, el asistente de la clínica. Ya recibí tu mensaje y estoy consultando la información disponible. En un momento te respondo.',
@@ -322,14 +332,18 @@ async function processIncomingMessage(
   if (automaticReply) {
     await storeAndSendReply(
       clinicId,
-      locationId,
+      conversation.locationId ?? locationId,
       conversation.id,
       phone,
       automaticReply,
     );
     return;
   }
-  const assistant = await generateAssistantReply(body, clinicId);
+  const assistant = await generateAssistantReply(
+    body,
+    clinicId,
+    conversation.locationId ?? locationId,
+  );
   if (assistant.toolsUsed.includes('request_human_help'))
     await escalateConversation(
       clinicId,
@@ -338,7 +352,7 @@ async function processIncomingMessage(
     );
   await storeAndSendReply(
     clinicId,
-    locationId,
+    conversation.locationId ?? locationId,
     conversation.id,
     phone,
     assistant.reply,
@@ -450,11 +464,12 @@ async function processCommercialReply(
         : null;
   if (!intent) return null;
   const appointment = await env.DB.prepare(
-    `SELECT id, doctor_id AS doctorId, service_id AS serviceId, starts_at AS startsAt, ends_at AS endsAt FROM appointments WHERE clinic_id = ? AND patient_id = ? AND starts_at >= ? AND status IN ('pending', 'confirmed') ORDER BY starts_at LIMIT 1`,
+    `SELECT id, location_id AS locationId, doctor_id AS doctorId, service_id AS serviceId, starts_at AS startsAt, ends_at AS endsAt FROM appointments WHERE clinic_id = ? AND patient_id = ? AND starts_at >= ? AND status IN ('pending', 'confirmed') ORDER BY starts_at LIMIT 1`,
   )
     .bind(clinicId, patientId, new Date().toISOString())
     .first<{
       id: string;
+      locationId: string | null;
       doctorId: string;
       serviceId: string | null;
       startsAt: string;
@@ -520,6 +535,7 @@ async function processCommercialReply(
     date,
     appointment.doctorId,
     appointment.serviceId ?? undefined,
+    appointment.locationId ?? undefined,
   );
   await env.DB.batch([
     patientEvent(
@@ -568,8 +584,37 @@ async function continuePendingFlow(
   }
 
   const payload = safeObject(flow.payload);
+  if (flow.action === 'booking_location') {
+    const locationIds = stringArray(payload.locationIds);
+    const locations = await env.DB.prepare(
+      `SELECT id, name FROM locations WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 20`,
+    )
+      .bind(clinicId)
+      .all<{ id: string; name: string }>();
+    const namedLocation = locations.results.find(
+      (location) =>
+        locationIds.includes(location.id) &&
+        normalizeOption(normalized).includes(normalizeOption(location.name)),
+    );
+    const locationId = namedLocation?.id ?? locationIds[Number(normalized) - 1];
+    if (!locationId || !locationIds.includes(locationId))
+      return 'Esa sucursal no existe. Elige una de las opciones mostradas o escribe “cancelar proceso”.';
+    await env.DB.prepare(
+      `UPDATE conversations SET location_id = ? WHERE id = ? AND clinic_id = ?`,
+    )
+      .bind(locationId, conversationId, clinicId)
+      .run();
+    const serviceId = stringValue(payload.serviceId);
+    return serviceId
+      ? startDoctorSelectionFlow(clinicId, conversationId, serviceId)
+      : startBookingFlow(clinicId, conversationId);
+  }
   const selectedIndex = /^\d+$/.test(normalized) ? Number(normalized) - 1 : -1;
-  if (selectedIndex < 0)
+  if (
+    selectedIndex < 0 &&
+    flow.action !== 'booking_service' &&
+    flow.action !== 'booking_doctor'
+  )
     return 'Responde con el número de una opción o escribe “cancelar proceso”.';
 
   if (flow.action === 'booking_service') {
@@ -587,31 +632,26 @@ async function continuePendingFlow(
     const serviceId = namedService?.id ?? serviceIds[selectedIndex];
     if (!serviceId)
       return 'Esa opción no existe. Elige uno de los números mostrados.';
-    const doctors = await env.DB.prepare(
-      `SELECT id, name FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 8`,
-    )
-      .bind(clinicId)
-      .all<{ id: string; name: string }>();
-    if (!doctors.results.length) {
-      await clearPendingFlow(conversationId);
-      return 'No hay profesionales activos. Avisaré a recepción para ayudarte.';
-    }
-    await setPendingFlow(conversationId, 'booking_doctor', {
-      serviceId,
-      doctorIds: doctors.results.map((doctor) => doctor.id),
-    });
-    return `¿Con qué profesional deseas atenderte?\n${doctors.results
-      .map((doctor, index) => `${index + 1}. ${doctor.name}`)
-      .join('\n')}`;
+    return startDoctorSelectionFlow(clinicId, conversationId, serviceId);
   }
 
   if (flow.action === 'booking_doctor') {
     const doctorIds = stringArray(payload.doctorIds);
-    const doctors = await env.DB.prepare(
-      `SELECT id, name FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 20`,
-    )
-      .bind(clinicId)
-      .all<{ id: string; name: string }>();
+    const locationId = await getConversationLocationId(
+      conversationId,
+      clinicId,
+    );
+    const doctors = locationId
+      ? await env.DB.prepare(
+          `SELECT d.id, d.name FROM doctors d JOIN doctor_locations dl ON dl.doctor_id = d.id AND dl.clinic_id = d.clinic_id AND dl.location_id = ? AND dl.active = 1 WHERE d.clinic_id = ? AND d.active = 1 ORDER BY d.name LIMIT 20`,
+        )
+          .bind(locationId, clinicId)
+          .all<{ id: string; name: string }>()
+      : await env.DB.prepare(
+          `SELECT id, name FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 20`,
+        )
+          .bind(clinicId)
+          .all<{ id: string; name: string }>();
     const namedDoctor = doctors.results.find(
       (doctor) =>
         doctorIds.includes(doctor.id) &&
@@ -625,6 +665,7 @@ async function continuePendingFlow(
       clinicId,
       doctorId,
       serviceId,
+      locationId,
     );
     if (!availability) {
       await clearPendingFlow(conversationId);
@@ -692,7 +733,12 @@ async function continueServiceAvailabilityFlow(
   )
     .bind(conversationId)
     .first<{ body: string }>();
-  if (!lastReply || !/horarios disponibles|busque horarios/.test(normalizeOption(lastReply.body)))
+  if (
+    !lastReply ||
+    !/horarios disponibles|busque horarios/.test(
+      normalizeOption(lastReply.body),
+    )
+  )
     return null;
 
   const services = await env.DB.prepare(
@@ -705,23 +751,27 @@ async function continueServiceAvailabilityFlow(
     previousText.includes(normalizeOption(item.name)),
   );
   if (!service) return null;
-
-  const doctors = await env.DB.prepare(
-    `SELECT id, name FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 8`,
-  )
-    .bind(clinicId)
-    .all<{ id: string; name: string }>();
-  if (!doctors.results.length) {
-    await clearPendingFlow(conversationId);
-    return 'No hay profesionales activos en la agenda. Avisaré a recepción para ayudarte.';
+  const locationId = await getConversationLocationId(conversationId, clinicId);
+  if (!locationId) {
+    const locations = await getActiveLocations(clinicId);
+    if (locations.length > 1) {
+      await setPendingFlow(conversationId, 'booking_location', {
+        serviceId: service.id,
+        locationIds: locations.map((location) => location.id),
+      });
+      return `Perfecto. ¿En cuál sucursal deseas atenderte?\n${locations
+        .map((location, index) => `${index + 1}. ${location.name}`)
+        .join('\n')}`;
+    }
+    if (locations.length === 1) {
+      await env.DB.prepare(
+        `UPDATE conversations SET location_id = ? WHERE id = ? AND clinic_id = ?`,
+      )
+        .bind(locations[0].id, conversationId, clinicId)
+        .run();
+    }
   }
-  await setPendingFlow(conversationId, 'booking_doctor', {
-    serviceId: service.id,
-    doctorIds: doctors.results.map((doctor) => doctor.id),
-  });
-  return `Perfecto. Para ${service.name}, elige un profesional respondiendo con el número o su nombre:\n${doctors.results
-    .map((doctor, index) => `${index + 1}. ${doctor.name}`)
-    .join('\n')}`;
+  return startDoctorSelectionFlow(clinicId, conversationId, service.id);
 }
 
 function normalizeOption(value: string) {
@@ -736,6 +786,25 @@ async function startBookingFlow(
   clinicId: string,
   conversationId: string,
 ): Promise<string> {
+  const locationId = await getConversationLocationId(conversationId, clinicId);
+  if (!locationId) {
+    const locations = await getActiveLocations(clinicId);
+    if (locations.length > 1) {
+      await setPendingFlow(conversationId, 'booking_location', {
+        locationIds: locations.map((location) => location.id),
+      });
+      return `Claro. Primero, ¿en cuál sucursal deseas atenderte?\n${locations
+        .map((location, index) => `${index + 1}. ${location.name}`)
+        .join('\n')}`;
+    }
+    if (locations.length === 1) {
+      await env.DB.prepare(
+        `UPDATE conversations SET location_id = ? WHERE id = ? AND clinic_id = ?`,
+      )
+        .bind(locations[0].id, conversationId, clinicId)
+        .run();
+    }
+  }
   const services = await env.DB.prepare(
     `SELECT id, name, duration_minutes AS durationMinutes FROM services WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 8`,
   )
@@ -754,10 +823,64 @@ async function startBookingFlow(
     .join('\n')}`;
 }
 
+async function startDoctorSelectionFlow(
+  clinicId: string,
+  conversationId: string,
+  serviceId: string,
+): Promise<string> {
+  const locationId = await getConversationLocationId(conversationId, clinicId);
+  const doctors = locationId
+    ? await env.DB.prepare(
+        `SELECT d.id, d.name FROM doctors d JOIN doctor_locations dl ON dl.doctor_id = d.id AND dl.clinic_id = d.clinic_id AND dl.location_id = ? AND dl.active = 1 WHERE d.clinic_id = ? AND d.active = 1 ORDER BY d.name LIMIT 8`,
+      )
+        .bind(locationId, clinicId)
+        .all<{ id: string; name: string }>()
+    : await env.DB.prepare(
+        `SELECT id, name FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 8`,
+      )
+        .bind(clinicId)
+        .all<{ id: string; name: string }>();
+  if (!doctors.results.length) {
+    await clearPendingFlow(conversationId);
+    return 'No hay profesionales activos en esa sucursal. Avisaré a recepción para ayudarte.';
+  }
+  await setPendingFlow(conversationId, 'booking_doctor', {
+    serviceId,
+    doctorIds: doctors.results.map((doctor) => doctor.id),
+  });
+  return `¿Con qué profesional deseas atenderte?\n${doctors.results
+    .map((doctor, index) => `${index + 1}. ${doctor.name}`)
+    .join('\n')}`;
+}
+
+async function getActiveLocations(
+  clinicId: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const result = await env.DB.prepare(
+    `SELECT id, name FROM locations WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 20`,
+  )
+    .bind(clinicId)
+    .all<{ id: string; name: string }>();
+  return result.results;
+}
+
+async function getConversationLocationId(
+  conversationId: string,
+  clinicId: string,
+): Promise<string | null> {
+  const row = await env.DB.prepare(
+    `SELECT location_id AS locationId FROM conversations WHERE id = ? AND clinic_id = ?`,
+  )
+    .bind(conversationId, clinicId)
+    .first<{ locationId: string | null }>();
+  return row?.locationId ?? null;
+}
+
 async function findNextAvailability(
   clinicId: string,
   doctorId: string,
   serviceId: string,
+  locationId: string | null,
 ): Promise<{ slots: string[]; timezone: string } | null> {
   const clinic = await env.DB.prepare(
     `SELECT timezone FROM clinics WHERE id = ?`,
@@ -767,7 +890,13 @@ async function findNextAvailability(
   const timezone = clinic?.timezone ?? 'America/Mexico_City';
   for (let offset = 1; offset <= 14; offset += 1) {
     const date = dateInTimeZone(offset, timezone);
-    const slots = await getAvailableSlots(clinicId, date, doctorId, serviceId);
+    const slots = await getAvailableSlots(
+      clinicId,
+      date,
+      doctorId,
+      serviceId,
+      locationId ?? undefined,
+    );
     if (slots.length) return { slots: slots.slice(0, 5), timezone };
   }
   return null;

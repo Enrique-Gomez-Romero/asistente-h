@@ -959,33 +959,36 @@ export async function updateBusinessHours(
 ): Promise<ActionResult> {
   return actionResult(async () => {
     const access = await requireClinicAccess(clinicId, ['owner', 'admin']);
-    const location = await env.DB.prepare(
-      'SELECT id FROM locations WHERE clinic_id = ? AND active = 1 ORDER BY id LIMIT 1',
+    const locations = await env.DB.prepare(
+      'SELECT id FROM locations WHERE clinic_id = ? AND active = 1 ORDER BY id',
     )
       .bind(clinicId)
-      .first<{ id: string }>();
-    if (!location) throw new Error('No se encontró una sede activa.');
-    const statements = values.map((value) => {
-      if (
-        value.dayOfWeek < 0 ||
-        value.dayOfWeek > 6 ||
-        !/^\d{2}:\d{2}$/.test(value.opensAt) ||
-        !/^\d{2}:\d{2}$/.test(value.closesAt) ||
-        value.opensAt >= value.closesAt
-      )
-        throw new Error('Revisa los horarios capturados.');
-      return env.DB.prepare(
-        `INSERT INTO business_hours (id, clinic_id, location_id, day_of_week, opens_at, closes_at, break_start, break_end, active) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?) ON CONFLICT(clinic_id, location_id, day_of_week) DO UPDATE SET opens_at = excluded.opens_at, closes_at = excluded.closes_at, active = excluded.active`,
-      ).bind(
-        `hours_${crypto.randomUUID()}`,
-        clinicId,
-        location.id,
-        value.dayOfWeek,
-        value.opensAt,
-        value.closesAt,
-        value.active ? 1 : 0,
-      );
-    });
+      .all<{ id: string }>();
+    if (!locations.results.length)
+      throw new Error('No se encontró una sede activa.');
+    const statements = locations.results.flatMap((location) =>
+      values.map((value) => {
+        if (
+          value.dayOfWeek < 0 ||
+          value.dayOfWeek > 6 ||
+          !/^\d{2}:\d{2}$/.test(value.opensAt) ||
+          !/^\d{2}:\d{2}$/.test(value.closesAt) ||
+          value.opensAt >= value.closesAt
+        )
+          throw new Error('Revisa los horarios capturados.');
+        return env.DB.prepare(
+          `INSERT INTO business_hours (id, clinic_id, location_id, day_of_week, opens_at, closes_at, break_start, break_end, active) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?) ON CONFLICT(clinic_id, location_id, day_of_week) DO UPDATE SET opens_at = excluded.opens_at, closes_at = excluded.closes_at, active = excluded.active`,
+        ).bind(
+          `hours_${crypto.randomUUID()}`,
+          clinicId,
+          location.id,
+          value.dayOfWeek,
+          value.opensAt,
+          value.closesAt,
+          value.active ? 1 : 0,
+        );
+      }),
+    );
     await env.DB.batch(statements);
     await logAudit(
       clinicId,
