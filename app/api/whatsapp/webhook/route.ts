@@ -260,6 +260,7 @@ async function processIncomingMessage(
   )
     .bind(clinicId, patient.id, locationId)
     .first<{ id: string; botPaused: number }>();
+  const isNewConversation = !conversation;
   if (!conversation) {
     conversation = { id: `conv_${crypto.randomUUID()}`, botPaused: 0 };
     await env.DB.prepare(
@@ -296,6 +297,22 @@ async function processIncomingMessage(
   );
 
   if (conversation.botPaused) return;
+  if (isNewConversation) {
+    try {
+      await storeAndSendReply(
+        clinicId,
+        locationId,
+        conversation.id,
+        phone,
+        '¡Hola! Soy Asistente H, el asistente de la clínica. Ya recibí tu mensaje y estoy consultando la información disponible. En un momento te respondo.',
+      );
+    } catch (error) {
+      logOperationalEvent('warn', 'whatsapp.acknowledgement_failed', {
+        clinicId,
+        error: error instanceof Error ? error.message : 'Error desconocido',
+      });
+    }
+  }
   const automaticReply = await processCommercialReply(
     clinicId,
     conversation.id,
