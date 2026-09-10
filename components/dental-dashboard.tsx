@@ -2083,19 +2083,6 @@ function BranchesView({
     );
   }
 
-  function faqSubmit(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    runAction(() =>
-      createFaq({
-        clinicId: data.clinic.id,
-        question: formText(form, 'question'),
-        answer: formText(form, 'answer'),
-      }),
-    );
-    event.currentTarget.reset();
-  }
-
   return (
     <>
       <PageHeading
@@ -2864,6 +2851,19 @@ function SettingsView({
         locationId: formText(form, 'locationId'),
       }),
     );
+  }
+
+  function faqSubmit(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      createFaq({
+        clinicId: data.clinic.id,
+        question: formText(form, 'question'),
+        answer: formText(form, 'answer'),
+      }),
+    );
+    event.currentTarget.reset();
   }
 
   return (
