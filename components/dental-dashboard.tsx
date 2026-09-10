@@ -2563,6 +2563,9 @@ function IntegrationsView({
                 appId={data.integration.metaEmbeddedSignup.appId}
                 configId={data.integration.metaEmbeddedSignup.configId}
                 ready={data.integration.metaEmbeddedSignup.ready}
+                secretStorageReady={
+                  data.integration.metaEmbeddedSignup.secretStorageReady
+                }
                 connected
                 phoneNumberId={primaryWhatsapp.phoneNumberId}
                 scope="organization"
@@ -2575,6 +2578,9 @@ function IntegrationsView({
                 appId={data.integration.metaEmbeddedSignup.appId}
                 configId={data.integration.metaEmbeddedSignup.configId}
                 ready={data.integration.metaEmbeddedSignup.ready}
+                secretStorageReady={
+                  data.integration.metaEmbeddedSignup.secretStorageReady
+                }
                 connected={false}
                 phoneNumberId={null}
                 scope="organization"
@@ -2588,12 +2594,16 @@ function IntegrationsView({
         </Card>
 
         <details className="group rounded-2xl border bg-card shadow-[0_8px_30px_rgb(26_52_45/5%)]">
-          <summary className="cursor-pointer list-none px-6 py-5">
+          <summary
+            className="cursor-pointer list-none px-6 py-5"
+            aria-label="Mostrar configuración avanzada por sede"
+          >
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="font-semibold">Configuración avanzada por sede</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Agrega un número exclusivo o un calendario distinto sólo cuando una sede lo necesite.
+                  Agrega un número exclusivo o un calendario distinto sólo
+                  cuando una sede lo necesite.
                 </p>
               </div>
               <Badge variant="outline">Opcional</Badge>
@@ -2630,8 +2640,14 @@ function IntegrationsView({
                           locationName={location.name}
                           connectionId={whatsappOverride.id}
                           appId={data.integration.metaEmbeddedSignup.appId}
-                          configId={data.integration.metaEmbeddedSignup.configId}
+                          configId={
+                            data.integration.metaEmbeddedSignup.configId
+                          }
                           ready={data.integration.metaEmbeddedSignup.ready}
+                          secretStorageReady={
+                            data.integration.metaEmbeddedSignup
+                              .secretStorageReady
+                          }
                           connected
                           phoneNumberId={whatsappOverride.phoneNumberId}
                         />
@@ -2641,8 +2657,14 @@ function IntegrationsView({
                           locationId={location.id}
                           locationName={location.name}
                           appId={data.integration.metaEmbeddedSignup.appId}
-                          configId={data.integration.metaEmbeddedSignup.configId}
+                          configId={
+                            data.integration.metaEmbeddedSignup.configId
+                          }
                           ready={data.integration.metaEmbeddedSignup.ready}
+                          secretStorageReady={
+                            data.integration.metaEmbeddedSignup
+                              .secretStorageReady
+                          }
                           connected={false}
                           phoneNumberId={null}
                         />
@@ -2653,7 +2675,9 @@ function IntegrationsView({
                       )}
                     </div>
                     <div className="space-y-3">
-                      <p className="text-sm font-semibold">Calendario de Google</p>
+                      <p className="text-sm font-semibold">
+                        Calendario de Google
+                      </p>
                       {googleConnections.map((connection) => (
                         <div
                           key={connection.id}
@@ -2694,8 +2718,16 @@ function IntegrationsView({
                           method="get"
                           className="grid gap-2 rounded-xl border p-3"
                         >
-                          <input type="hidden" name="clinicId" value={data.clinic.id} />
-                          <input type="hidden" name="locationId" value={location.id} />
+                          <input
+                            type="hidden"
+                            name="clinicId"
+                            value={data.clinic.id}
+                          />
+                          <input
+                            type="hidden"
+                            name="locationId"
+                            value={location.id}
+                          />
                           <Input
                             name="label"
                             defaultValue={`Agenda · ${location.name}`}
@@ -3324,6 +3356,9 @@ function SettingsView({
                   appId={data.integration.metaEmbeddedSignup.appId}
                   configId={data.integration.metaEmbeddedSignup.configId}
                   ready={data.integration.metaEmbeddedSignup.ready}
+                  secretStorageReady={
+                    data.integration.metaEmbeddedSignup.secretStorageReady
+                  }
                   connected={data.integration.whatsappConfigured}
                   phoneNumberId={
                     data.saas.integrations.find(

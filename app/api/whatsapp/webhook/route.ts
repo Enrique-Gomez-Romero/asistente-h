@@ -12,6 +12,7 @@ import { appointmentEnd } from '@/lib/scheduling';
 import { recordUsage, resolveWhatsAppConnection } from '@/lib/saas';
 import { verifyWebhookSignature } from '@/lib/webhook-security';
 import { sendTenantWhatsAppText } from '@/lib/whatsapp';
+import { readStoredWhatsAppCredentials } from '@/lib/whatsapp-credentials';
 
 type WhatsAppMessage = {
   id?: string;
@@ -41,10 +42,31 @@ export async function GET(request: Request) {
   const mode = url.searchParams.get('hub.mode');
   const token = url.searchParams.get('hub.verify_token');
   const challenge = url.searchParams.get('hub.challenge');
+  const connectionId = url.searchParams.get('connection');
+  let expectedToken = process.env.WHATSAPP_VERIFY_TOKEN;
+  if (connectionId) {
+    await ensureDatabase();
+    const connection = await loadWebhookConnection(connectionId);
+    if (!connection)
+      return NextResponse.json(
+        { error: 'Unknown connection' },
+        { status: 404 },
+      );
+    const credentials = await readStoredWhatsAppCredentials({
+      secretReference: connection.secretReference,
+      clinicId: connection.clinicId,
+      connectionId: connection.id,
+    }).catch(() => null);
+    expectedToken =
+      credentials?.mode === 'customer_app'
+        ? credentials.verifyToken
+        : undefined;
+  }
   if (
     mode === 'subscribe' &&
     token &&
-    token === process.env.WHATSAPP_VERIFY_TOKEN
+    expectedToken &&
+    token === expectedToken
   ) {
     return new Response(challenge ?? '', { status: 200 });
   }
@@ -58,7 +80,25 @@ export async function POST(request: Request) {
   const rawBody = await request.text();
   if (rawBody.length > 1_000_000)
     return NextResponse.json({ error: 'Payload too large' }, { status: 413 });
-  const appSecret = process.env.META_APP_SECRET;
+  const connectionId = new URL(request.url).searchParams.get('connection');
+  await ensureDatabase();
+  const targetConnection = connectionId
+    ? await loadWebhookConnection(connectionId)
+    : null;
+  if (connectionId && !targetConnection)
+    return NextResponse.json({ error: 'Unknown connection' }, { status: 404 });
+  const storedCredentials = targetConnection
+    ? await readStoredWhatsAppCredentials({
+        secretReference: targetConnection.secretReference,
+        clinicId: targetConnection.clinicId,
+        connectionId: targetConnection.id,
+      }).catch(() => null)
+    : null;
+  const appSecret = targetConnection
+    ? storedCredentials?.mode === 'customer_app'
+      ? storedCredentials.appSecret
+      : undefined
+    : process.env.META_APP_SECRET;
   if (!appSecret)
     return NextResponse.json(
       { error: 'Webhook is not configured' },
@@ -75,7 +115,15 @@ export async function POST(request: Request) {
   const payload = safePayload(rawBody);
   if (!payload)
     return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
-  await ensureDatabase();
+  if (
+    targetConnection &&
+    !payloadBelongsToConnection(payload, targetConnection.phoneNumberId)
+  ) {
+    logOperationalEvent('warn', 'whatsapp.connection_mismatch', {
+      connectionId: targetConnection.id,
+    });
+    return NextResponse.json({ error: 'Connection mismatch' }, { status: 403 });
+  }
 
   let processedMessages = 0;
   let processedStatuses = 0;
@@ -97,7 +145,12 @@ export async function POST(request: Request) {
         processedStatuses += 1;
       }
       const phoneNumberId = value?.metadata?.phone_number_id;
-      const connection = await resolveWhatsAppConnection(phoneNumberId);
+      const connection = targetConnection
+        ? {
+            clinicId: targetConnection.clinicId,
+            locationId: targetConnection.locationId,
+          }
+        : await resolveWhatsAppConnection(phoneNumberId);
       if (!connection) continue;
       const contactName =
         value?.contacts?.[0]?.profile?.name?.trim() || 'Paciente de WhatsApp';
@@ -105,11 +158,7 @@ export async function POST(request: Request) {
         const normalizedPhone = message.from
           ? normalizePhone(message.from)
           : null;
-        if (
-          message.type !== 'text' ||
-          !normalizedPhone ||
-          !message.text?.body
-        )
+        if (message.type !== 'text' || !normalizedPhone || !message.text?.body)
           continue;
         await processIncomingMessage(
           connection.clinicId,
@@ -128,6 +177,41 @@ export async function POST(request: Request) {
     processedStatuses,
   });
   return NextResponse.json({ received: true });
+}
+
+type WebhookConnection = {
+  id: string;
+  clinicId: string;
+  locationId: string | null;
+  phoneNumberId: string;
+  secretReference: string;
+};
+
+async function loadWebhookConnection(
+  connectionId: string,
+): Promise<WebhookConnection | null> {
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(connectionId)) return null;
+  return env.DB.prepare(
+    `SELECT id, clinic_id AS clinicId, location_id AS locationId, phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE id = ? AND provider = 'whatsapp' AND status = 'connected' AND phone_number_id IS NOT NULL AND secret_reference IS NOT NULL`,
+  )
+    .bind(connectionId)
+    .first<WebhookConnection>();
+}
+
+function payloadBelongsToConnection(
+  payload: WhatsAppPayload,
+  phoneNumberId: string,
+) {
+  let foundMetadata = false;
+  for (const entry of payload.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const receivedPhoneNumberId = change.value?.metadata?.phone_number_id;
+      if (!receivedPhoneNumberId) continue;
+      foundMetadata = true;
+      if (receivedPhoneNumberId !== phoneNumberId) return false;
+    }
+  }
+  return foundMetadata;
 }
 
 function safePayload(value: string): WhatsAppPayload | null {
@@ -219,7 +303,13 @@ async function processIncomingMessage(
     body,
   );
   if (automaticReply) {
-    await storeAndSendReply(clinicId, locationId, conversation.id, phone, automaticReply);
+    await storeAndSendReply(
+      clinicId,
+      locationId,
+      conversation.id,
+      phone,
+      automaticReply,
+    );
     return;
   }
   const assistant = await generateAssistantReply(body, clinicId);
@@ -229,7 +319,13 @@ async function processIncomingMessage(
       conversation.id,
       'El paciente o el asistente solicitó apoyo humano.',
     );
-  await storeAndSendReply(clinicId, locationId, conversation.id, phone, assistant.reply);
+  await storeAndSendReply(
+    clinicId,
+    locationId,
+    conversation.id,
+    phone,
+    assistant.reply,
+  );
 }
 
 async function storeAndSendReply(
@@ -249,7 +345,12 @@ async function storeAndSendReply(
       'UPDATE conversations SET last_message_at = ? WHERE id = ?',
     ).bind(replyTime, conversationId),
   ]);
-  const delivery = await sendTenantWhatsAppText(clinicId, phone, body, locationId);
+  const delivery = await sendTenantWhatsAppText(
+    clinicId,
+    phone,
+    body,
+    locationId,
+  );
   await env.DB.prepare(
     `UPDATE messages SET external_id = ?, delivery_status = ?, last_error = ? WHERE id = ?`,
   )
@@ -293,7 +394,11 @@ async function processCommercialReply(
   );
   if (pendingReply) return pendingReply;
 
-  if (/\b(agendar|reservar|sacar)\b.*\b(cita|consulta)\b|\bquiero una cita\b/.test(normalized))
+  if (
+    /\b(agendar|reservar|sacar)\b.*\b(cita|consulta)\b|\bquiero una cita\b/.test(
+      normalized,
+    )
+  )
     return startBookingFlow(clinicId, conversationId);
   if (/^[1-5]$/.test(normalized)) {
     const survey = await env.DB.prepare(
@@ -438,16 +543,15 @@ async function continuePendingFlow(
   }
 
   const payload = safeObject(flow.payload);
-  const selectedIndex = /^\d+$/.test(normalized)
-    ? Number(normalized) - 1
-    : -1;
+  const selectedIndex = /^\d+$/.test(normalized) ? Number(normalized) - 1 : -1;
   if (selectedIndex < 0)
     return 'Responde con el número de una opción o escribe “cancelar proceso”.';
 
   if (flow.action === 'booking_service') {
     const serviceIds = stringArray(payload.serviceIds);
     const serviceId = serviceIds[selectedIndex];
-    if (!serviceId) return 'Esa opción no existe. Elige uno de los números mostrados.';
+    if (!serviceId)
+      return 'Esa opción no existe. Elige uno de los números mostrados.';
     const doctors = await env.DB.prepare(
       `SELECT id, name FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 8`,
     )
@@ -569,12 +673,7 @@ async function findNextAvailability(
   const timezone = clinic?.timezone ?? 'America/Mexico_City';
   for (let offset = 1; offset <= 14; offset += 1) {
     const date = dateInTimeZone(offset, timezone);
-    const slots = await getAvailableSlots(
-      clinicId,
-      date,
-      doctorId,
-      serviceId,
-    );
+    const slots = await getAvailableSlots(clinicId, date, doctorId, serviceId);
     if (slots.length) return { slots: slots.slice(0, 5), timezone };
   }
   return null;
@@ -606,11 +705,17 @@ async function bookAppointmentForPatient(input: {
       .first<{ locationId: string | null }>(),
   ]);
   if (!service || !doctor)
-    return { ok: false, message: 'El servicio o profesional ya no está disponible.' };
+    return {
+      ok: false,
+      message: 'El servicio o profesional ya no está disponible.',
+    };
   const startsAt = new Date(input.startsAt);
   const endsAt = appointmentEnd(startsAt, service.durationMinutes);
   if (startsAt.getTime() <= Date.now())
-    return { ok: false, message: 'Ese horario ya pasó. Inicia nuevamente la reservación.' };
+    return {
+      ok: false,
+      message: 'Ese horario ya pasó. Inicia nuevamente la reservación.',
+    };
   const appointmentId = `appt_${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   const insert = await env.DB.prepare(
@@ -640,7 +745,8 @@ async function bookAppointmentForPatient(input: {
   if (!insert.meta.changes)
     return {
       ok: false,
-      message: 'Ese horario acaba de ocuparse. Inicia nuevamente para elegir otro.',
+      message:
+        'Ese horario acaba de ocuparse. Inicia nuevamente para elegir otro.',
     };
   await env.DB.batch([
     patientEvent(
@@ -660,7 +766,9 @@ async function bookAppointmentForPatient(input: {
   ]);
   await enqueueAppointmentAutomations(input.clinicId, appointmentId);
   await syncAppointmentToGoogleCalendar(input.clinicId, appointmentId);
-  const clinic = await env.DB.prepare(`SELECT timezone FROM clinics WHERE id = ?`)
+  const clinic = await env.DB.prepare(
+    `SELECT timezone FROM clinics WHERE id = ?`,
+  )
     .bind(input.clinicId)
     .first<{ timezone: string }>();
   return {
@@ -680,7 +788,10 @@ async function rescheduleAppointment(
     .bind(appointmentId, clinicId)
     .first<{ doctorId: string; startsAt: string; endsAt: string }>();
   if (!appointment)
-    return { ok: false, message: 'La cita ya no está disponible para reprogramarse.' };
+    return {
+      ok: false,
+      message: 'La cita ya no está disponible para reprogramarse.',
+    };
   const duration =
     new Date(appointment.endsAt).getTime() -
     new Date(appointment.startsAt).getTime();
@@ -709,7 +820,10 @@ async function rescheduleAppointment(
     )
     .run();
   if (!update.meta.changes)
-    return { ok: false, message: 'Ese horario acaba de ocuparse. Elige otra opción.' };
+    return {
+      ok: false,
+      message: 'Ese horario acaba de ocuparse. Elige otra opción.',
+    };
   await env.DB.prepare(
     `UPDATE scheduled_messages SET status = 'cancelled', last_error = 'Cita reprogramada' WHERE clinic_id = ? AND appointment_id = ? AND status = 'pending'`,
   )
@@ -717,7 +831,9 @@ async function rescheduleAppointment(
     .run();
   await enqueueAppointmentAutomations(clinicId, appointmentId);
   await syncAppointmentToGoogleCalendar(clinicId, appointmentId);
-  const clinic = await env.DB.prepare(`SELECT timezone FROM clinics WHERE id = ?`)
+  const clinic = await env.DB.prepare(
+    `SELECT timezone FROM clinics WHERE id = ?`,
+  )
     .bind(clinicId)
     .first<{ timezone: string }>();
   return {

@@ -1,9 +1,9 @@
 import { env } from 'cloudflare:workers';
 
 import { ensureDatabase } from '@/db/initialize';
-import { accessOrganizationSecret } from '@/lib/integration-secrets';
 import { normalizePhone } from '@/lib/phone';
 import { recordUsage } from '@/lib/saas';
+import { readStoredWhatsAppCredentials } from '@/lib/whatsapp-credentials';
 
 export type WhatsAppSendResult = {
   sent: boolean;
@@ -17,10 +17,15 @@ export async function sendTenantWhatsAppText(
   body: string,
   locationId?: string | null,
 ): Promise<WhatsAppSendResult> {
-  return sendTenantWhatsAppPayload(clinicId, phone, {
-    type: 'text',
-    text: { body },
-  }, locationId);
+  return sendTenantWhatsAppPayload(
+    clinicId,
+    phone,
+    {
+      type: 'text',
+      text: { body },
+    },
+    locationId,
+  );
 }
 
 export async function sendTenantWhatsAppTemplate(
@@ -64,7 +69,7 @@ async function sendTenantWhatsAppPayload(
   let response: Response;
   try {
     response = await fetch(
-      `https://graph.facebook.com/${process.env.WHATSAPP_GRAPH_VERSION ?? 'v23.0'}/${credentials.phoneNumberId}/messages`,
+      `https://graph.facebook.com/${credentials.graphVersion}/${credentials.phoneNumberId}/messages`,
       {
         method: 'POST',
         headers: {
@@ -104,11 +109,16 @@ async function getTenantCredentials(
   clinicId: string,
   locationId?: string | null,
 ): Promise<
-  | { ok: true; phoneNumberId: string; accessToken: string }
+  | {
+      ok: true;
+      phoneNumberId: string;
+      accessToken: string;
+      graphVersion: string;
+    }
   | { ok: false; error: string }
 > {
   const connection = await env.DB.prepare(
-    `SELECT phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp' AND status = 'connected' AND ((? IS NULL AND location_id IS NULL) OR (? IS NOT NULL AND (location_id = ? OR location_id IS NULL))) ORDER BY CASE WHEN location_id = ? THEN 0 WHEN location_id IS NULL THEN 1 ELSE 2 END, created_at LIMIT 1`,
+    `SELECT id, phone_number_id AS phoneNumberId, secret_reference AS secretReference FROM integration_connections WHERE clinic_id = ? AND provider = 'whatsapp' AND status = 'connected' AND ((? IS NULL AND location_id IS NULL) OR (? IS NOT NULL AND (location_id = ? OR location_id IS NULL))) ORDER BY CASE WHEN location_id = ? THEN 0 WHEN location_id IS NULL THEN 1 ELSE 2 END, created_at LIMIT 1`,
   )
     .bind(
       clinicId,
@@ -118,6 +128,7 @@ async function getTenantCredentials(
       locationId ?? null,
     )
     .first<{
+      id: string;
       phoneNumberId: string | null;
       secretReference: string | null;
     }>();
@@ -132,14 +143,19 @@ async function getTenantCredentials(
 
   if (connection?.secretReference) {
     try {
+      const credentials = await readStoredWhatsAppCredentials({
+        secretReference: connection.secretReference,
+        clinicId,
+        connectionId: connection.id,
+      });
       return {
         ok: true,
         phoneNumberId,
-        accessToken: await accessOrganizationSecret(
-          connection.secretReference,
-          clinicId,
-          'whatsapp',
-        ),
+        accessToken: credentials.accessToken,
+        graphVersion:
+          credentials.mode === 'customer_app'
+            ? credentials.graphVersion
+            : (process.env.WHATSAPP_GRAPH_VERSION ?? 'v23.0'),
       };
     } catch (error) {
       return {
@@ -160,6 +176,7 @@ async function getTenantCredentials(
       ok: true,
       phoneNumberId,
       accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+      graphVersion: process.env.WHATSAPP_GRAPH_VERSION ?? 'v23.0',
     };
 
   return {
