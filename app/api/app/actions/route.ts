@@ -38,6 +38,7 @@ import { getAuthenticatedUser } from '@/lib/auth';
 const handlers = {
   anonymizePatient,
   createAppointment,
+  createFaq,
   createLocation,
   createOrganization,
   createProfessional,
