@@ -176,7 +176,12 @@ async function callGemini(
       body: JSON.stringify(body),
     },
   );
-  if (!response.ok) throw new Error(`Gemini returned ${response.status}`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(
+      `Gemini returned ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`,
+    );
+  }
   return response.json() as Promise<GeminiResponse>;
 }
 
@@ -242,6 +247,35 @@ async function generateDemoReply(
     };
   }
   const services = await getActiveServices(clinicId);
+  if (
+    /todos? los servicios|que servicios|qué servicios|catalogo|catálogo|servicios disponibles/.test(
+      normalized,
+    )
+  ) {
+    if (!services.length) {
+      return {
+        reply:
+          'Por el momento no tengo servicios publicados en el catálogo. Voy a pedir a recepción que te comparta la información.',
+        mode: 'demo',
+        toolsUsed: ['list_services'],
+      };
+    }
+    const serviceList = services
+      .map((service) => {
+        const price = new Intl.NumberFormat('es-MX', {
+          style: 'currency',
+          currency: 'MXN',
+          maximumFractionDigits: 0,
+        }).format(service.priceCents / 100);
+        return `• ${service.name}: ${price}, ${service.durationMinutes} minutos`;
+      })
+      .join('\n');
+    return {
+      reply: `Estos son los servicios disponibles:\n${serviceList}\n\n¿Cuál te interesa consultar?`,
+      mode: 'demo',
+      toolsUsed: ['list_services'],
+    };
+  }
   const matched =
     services.find((service) =>
       normalized.includes(
