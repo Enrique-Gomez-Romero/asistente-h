@@ -411,8 +411,16 @@ async function processCommercialReply(
   );
   if (pendingReply) return pendingReply;
 
+  if (/^(si|sí|claro|dale|ok|okay|va|adelante)$/.test(normalized)) {
+    const bookingReply = await continueServiceAvailabilityFlow(
+      clinicId,
+      conversationId,
+    );
+    if (bookingReply) return bookingReply;
+  }
+
   if (
-    /\b(agendar|reservar|sacar)\b.*\b(cita|consulta)\b|\bquiero una cita\b/.test(
+    /\b(agendar|reservar|sacar|programar)\b(?:.*\b(cita|consulta|visita)\b|$)|\bquiero una cita\b/.test(
       normalized,
     )
   )
@@ -566,7 +574,17 @@ async function continuePendingFlow(
 
   if (flow.action === 'booking_service') {
     const serviceIds = stringArray(payload.serviceIds);
-    const serviceId = serviceIds[selectedIndex];
+    const services = await env.DB.prepare(
+      `SELECT id, name FROM services WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 20`,
+    )
+      .bind(clinicId)
+      .all<{ id: string; name: string }>();
+    const namedService = services.results.find(
+      (service) =>
+        serviceIds.includes(service.id) &&
+        normalizeOption(normalized).includes(normalizeOption(service.name)),
+    );
+    const serviceId = namedService?.id ?? serviceIds[selectedIndex];
     if (!serviceId)
       return 'Esa opción no existe. Elige uno de los números mostrados.';
     const doctors = await env.DB.prepare(
@@ -589,7 +607,17 @@ async function continuePendingFlow(
 
   if (flow.action === 'booking_doctor') {
     const doctorIds = stringArray(payload.doctorIds);
-    const doctorId = doctorIds[selectedIndex];
+    const doctors = await env.DB.prepare(
+      `SELECT id, name FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 20`,
+    )
+      .bind(clinicId)
+      .all<{ id: string; name: string }>();
+    const namedDoctor = doctors.results.find(
+      (doctor) =>
+        doctorIds.includes(doctor.id) &&
+        normalizeOption(normalized).includes(normalizeOption(doctor.name)),
+    );
+    const doctorId = namedDoctor?.id ?? doctorIds[selectedIndex];
     const serviceId = stringValue(payload.serviceId);
     if (!doctorId || !serviceId)
       return 'Esa opción no existe. Elige uno de los números mostrados.';
@@ -653,6 +681,55 @@ async function continuePendingFlow(
 
   await clearPendingFlow(conversationId);
   return null;
+}
+
+async function continueServiceAvailabilityFlow(
+  clinicId: string,
+  conversationId: string,
+): Promise<string | null> {
+  const lastReply = await env.DB.prepare(
+    `SELECT body FROM messages WHERE conversation_id = ? AND direction = 'outbound' ORDER BY created_at DESC LIMIT 1`,
+  )
+    .bind(conversationId)
+    .first<{ body: string }>();
+  if (!lastReply || !/horarios disponibles|busque horarios/.test(normalizeOption(lastReply.body)))
+    return null;
+
+  const services = await env.DB.prepare(
+    `SELECT id, name FROM services WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 20`,
+  )
+    .bind(clinicId)
+    .all<{ id: string; name: string }>();
+  const previousText = normalizeOption(lastReply.body);
+  const service = services.results.find((item) =>
+    previousText.includes(normalizeOption(item.name)),
+  );
+  if (!service) return null;
+
+  const doctors = await env.DB.prepare(
+    `SELECT id, name FROM doctors WHERE clinic_id = ? AND active = 1 ORDER BY name LIMIT 8`,
+  )
+    .bind(clinicId)
+    .all<{ id: string; name: string }>();
+  if (!doctors.results.length) {
+    await clearPendingFlow(conversationId);
+    return 'No hay profesionales activos en la agenda. Avisaré a recepción para ayudarte.';
+  }
+  await setPendingFlow(conversationId, 'booking_doctor', {
+    serviceId: service.id,
+    doctorIds: doctors.results.map((doctor) => doctor.id),
+  });
+  return `Perfecto. Para ${service.name}, elige un profesional respondiendo con el número o su nombre:\n${doctors.results
+    .map((doctor, index) => `${index + 1}. ${doctor.name}`)
+    .join('\n')}`;
+}
+
+function normalizeOption(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('es-MX')
+    .trim();
 }
 
 async function startBookingFlow(
