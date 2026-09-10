@@ -88,7 +88,10 @@ export async function generateAssistantReply(
     try {
       result = await generateGeminiReply(message, clinicId);
     } catch (error) {
-      console.error('Gemini assistant failed, using safe demo fallback', error);
+      console.error(
+        'Gemini assistant failed, using safe demo fallback',
+        error instanceof Error ? error.message : error,
+      );
       result = await generateDemoReply(message, clinicId);
     }
   }
