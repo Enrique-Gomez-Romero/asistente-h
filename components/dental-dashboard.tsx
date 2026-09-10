@@ -15,9 +15,9 @@ import {
   Clock3,
   CreditCard,
   FileText,
+  LogOut,
   MessageCircle,
   Megaphone,
-  MoreHorizontal,
   Plus,
   Search,
   Send,
@@ -361,19 +361,30 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
                 <Progress value={78} className="h-1.5 bg-white" />
               </CardContent>
             </Card>
-            <div className="flex items-center gap-3 border-t border-sidebar-border px-2 pt-4">
-              <div className="grid size-9 place-items-center rounded-full bg-[#dce8ff] text-xs font-bold text-[#405593]">
-                {initials(data.saas.user.displayName)}
+            <div className="space-y-2 border-t border-sidebar-border px-2 pt-4">
+              <div className="flex items-center gap-3">
+                <div className="grid size-9 place-items-center rounded-full bg-[#dce8ff] text-xs font-bold text-[#405593]">
+                  {initials(data.saas.user.displayName)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">
+                    {data.saas.user.displayName}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {roleLabel(data.saas.activeOrganization?.role)}
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">
-                  {data.saas.user.displayName}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {roleLabel(data.saas.activeOrganization?.role)}
-                </p>
-              </div>
-              <MoreHorizontal className="size-4 text-muted-foreground" />
+              <form action="/logout" method="post">
+                <Button
+                  type="submit"
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start text-muted-foreground hover:text-destructive"
+                >
+                  <LogOut data-icon="inline-start" /> Cerrar sesión
+                </Button>
+              </form>
             </div>
           </div>
         </aside>
@@ -3472,6 +3483,22 @@ function SettingsView({
                 <FileText className="mr-2 size-4" /> Descargar respaldo JSON
               </a>
             ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-[0_8px_30px_rgb(26_52_45/5%)]">
+          <CardHeader>
+            <CardTitle>Sesión</CardTitle>
+            <CardDescription>
+              Has iniciado sesión como {data.saas.user.displayName}.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form action="/logout" method="post">
+              <Button type="submit" variant="outline">
+                <LogOut data-icon="inline-start" /> Cerrar sesión
+              </Button>
+            </form>
           </CardContent>
         </Card>
       </div>
