@@ -50,10 +50,13 @@ import {
   toggleBotPaused as serverToggleBotPaused,
   toggleService as serverToggleService,
   updateBusinessHours as serverUpdateBusinessHours,
+  updateFaq as serverUpdateFaq,
   updateLocation as serverUpdateLocation,
   updateMemberLocations as serverUpdateMemberLocations,
   updateOrganizationProfile as serverUpdateOrganizationProfile,
   updatePatientConsent as serverUpdatePatientConsent,
+  updateProfessional as serverUpdateProfessional,
+  updateService as serverUpdateService,
   type ActionResult,
 } from '@/app/actions';
 import {
@@ -162,6 +165,8 @@ const toggleService = (...args: Parameters<typeof serverToggleService>) =>
 const updateBusinessHours = (
   ...args: Parameters<typeof serverUpdateBusinessHours>
 ) => callAppAction<ActionResult>('updateBusinessHours', args);
+const updateFaq = (...args: Parameters<typeof serverUpdateFaq>) =>
+  callAppAction<ActionResult>('updateFaq', args);
 const updateLocation = (...args: Parameters<typeof serverUpdateLocation>) =>
   callAppAction<ActionResult>('updateLocation', args);
 const updateMemberLocations = (
@@ -173,6 +178,11 @@ const updateOrganizationProfile = (
 const updatePatientConsent = (
   ...args: Parameters<typeof serverUpdatePatientConsent>
 ) => callAppAction<ActionResult>('updatePatientConsent', args);
+const updateProfessional = (
+  ...args: Parameters<typeof serverUpdateProfessional>
+) => callAppAction<ActionResult>('updateProfessional', args);
+const updateService = (...args: Parameters<typeof serverUpdateService>) =>
+  callAppAction<ActionResult>('updateService', args);
 const addWaitlistEntry = (...args: Parameters<typeof serverAddWaitlistEntry>) =>
   callAppAction<ActionResult>('addWaitlistEntry', args);
 const createReactivationCampaign = (
@@ -486,6 +496,7 @@ export function DentalDashboard({ data }: { data: DashboardData }) {
             ) : null}
             {view === 'services' ? (
               <ServicesView
+                clinicId={data.clinic.id}
                 services={data.services}
                 onAdd={() => setServiceOpen(true)}
                 runAction={runAction}
@@ -1333,16 +1344,40 @@ function PatientsView({
 }
 
 function ServicesView({
+  clinicId,
   services,
   onAdd,
   runAction,
   canManage,
 }: {
+  clinicId: string;
   services: ServiceRecord[];
   onAdd: () => void;
   runAction: (operation: () => Promise<ActionResult>) => void;
   canManage: boolean;
 }) {
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+
+  function serviceUpdateSubmit(
+    event: SyntheticEvent<HTMLFormElement>,
+    service: ServiceRecord,
+  ) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      updateService({
+        clinicId,
+        serviceId: service.id,
+        name: formText(form, 'name'),
+        category: formText(form, 'category'),
+        durationMinutes: Number(formText(form, 'durationMinutes')),
+        pricePesos: Number(formText(form, 'pricePesos')),
+        description: formText(form, 'description'),
+      }),
+    );
+    setEditingServiceId(null);
+  }
+
   return (
     <>
       <PageHeading
@@ -1399,6 +1434,76 @@ function ServicesView({
                   {service.durationMinutes} min
                 </Badge>
               </div>
+              {canManage && editingServiceId !== service.id ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-4 w-full"
+                  onClick={() => setEditingServiceId(service.id)}
+                >
+                  Editar servicio
+                </Button>
+              ) : null}
+              {canManage && editingServiceId === service.id ? (
+                <form
+                  onSubmit={(event) => serviceUpdateSubmit(event, service)}
+                  className="mt-4 space-y-3 border-t pt-4"
+                >
+                  <Input
+                    name="name"
+                    defaultValue={service.name}
+                    aria-label="Nombre del servicio"
+                    required
+                  />
+                  <Input
+                    name="category"
+                    defaultValue={service.category}
+                    aria-label="Categoría del servicio"
+                    required
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      name="durationMinutes"
+                      type="number"
+                      min="10"
+                      step="5"
+                      defaultValue={service.durationMinutes}
+                      aria-label="Duración del servicio"
+                      required
+                    />
+                    <Input
+                      name="pricePesos"
+                      type="number"
+                      min="0"
+                      step="50"
+                      defaultValue={service.priceCents / 100}
+                      aria-label="Precio del servicio"
+                      required
+                    />
+                  </div>
+                  <Textarea
+                    name="description"
+                    defaultValue={service.description ?? ''}
+                    aria-label="Descripción del servicio"
+                    rows={2}
+                    required
+                  />
+                  <div className="flex gap-2">
+                    <Button type="submit" size="sm" disabled={isPending}>
+                      Guardar cambios
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setEditingServiceId(null)}
+                    >
+                      Cancelar
+                    </Button>
+                  </div>
+                </form>
+              ) : null}
             </CardContent>
           </Card>
         ))}
@@ -2055,6 +2160,7 @@ function BranchesView({
     data.saas.isPlatformAdmin ||
     ['owner', 'admin'].includes(data.saas.activeOrganization?.role ?? '');
   const limit = data.saas.subscription?.plan.maxLocations ?? 0;
+  const [editingDoctorId, setEditingDoctorId] = useState<string | null>(null);
 
   function locationSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2081,6 +2187,25 @@ function BranchesView({
         locationId: formText(form, 'locationId'),
       }),
     );
+  }
+
+  function professionalUpdateSubmit(
+    event: SyntheticEvent<HTMLFormElement>,
+    doctorId: string,
+  ) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      updateProfessional({
+        clinicId: data.clinic.id,
+        professionalId: doctorId,
+        name: formText(form, 'name'),
+        email: formText(form, 'email'),
+        specialty: formText(form, 'specialty'),
+        locationId: formText(form, 'locationId'),
+      }),
+    );
+    setEditingDoctorId(null);
   }
 
   return (
@@ -2195,13 +2320,82 @@ function BranchesView({
               Asigna a cada profesional una sede de trabajo.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
+            <CardContent className="space-y-3">
             {data.doctors.map((doctor) => (
               <div key={doctor.id} className="rounded-xl border p-3">
-                <p className="text-sm font-semibold">{doctor.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {doctor.specialty ?? 'Sin especialidad'}
-                </p>
+                {editingDoctorId === doctor.id ? (
+                  <form
+                    onSubmit={(event) =>
+                      professionalUpdateSubmit(event, doctor.id)
+                    }
+                    className="space-y-2"
+                  >
+                    <Input
+                      name="name"
+                      defaultValue={doctor.name}
+                      aria-label="Nombre del profesional"
+                      required
+                    />
+                    <Input
+                      name="specialty"
+                      defaultValue={doctor.specialty ?? ''}
+                      aria-label="Especialidad del profesional"
+                      placeholder="Especialidad o función"
+                    />
+                    <Input
+                      name="email"
+                      type="email"
+                      defaultValue={doctor.email ?? ''}
+                      aria-label="Correo del profesional"
+                      placeholder="Correo"
+                    />
+                    <NativeSelect
+                      name="locationId"
+                      defaultValue={doctor.locationIds[0] ?? data.locations[0]?.id}
+                      className="w-full"
+                      required
+                    >
+                      {data.locations.map((location) => (
+                        <NativeSelectOption key={location.id} value={location.id}>
+                          {location.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <div className="flex gap-2">
+                      <Button type="submit" size="sm" disabled={isPending}>
+                        Guardar cambios
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditingDoctorId(null)}
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold">{doctor.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {doctor.specialty ?? 'Sin especialidad'}
+                        {doctor.email ? ` · ${doctor.email}` : ''}
+                      </p>
+                    </div>
+                    {canManage ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setEditingDoctorId(doctor.id)}
+                      >
+                        Editar
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
               </div>
             ))}
             {canManage ? (
@@ -2799,6 +2993,7 @@ function SettingsView({
     ),
   );
   const subscription = data.saas.subscription;
+  const [editingFaqId, setEditingFaqId] = useState<string | null>(null);
 
   function profileSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2864,6 +3059,23 @@ function SettingsView({
       }),
     );
     event.currentTarget.reset();
+  }
+
+  function faqUpdateSubmit(
+    event: SyntheticEvent<HTMLFormElement>,
+    faqId: string,
+  ) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    runAction(() =>
+      updateFaq({
+        clinicId: data.clinic.id,
+        faqId,
+        question: formText(form, 'question'),
+        answer: formText(form, 'answer'),
+      }),
+    );
+    setEditingFaqId(null);
   }
 
   return (
@@ -3449,10 +3661,58 @@ function SettingsView({
           <CardContent className="space-y-3">
             {data.faqs.map((faq) => (
               <div key={faq.id} className="rounded-xl border p-3">
-                <p className="text-sm font-semibold">{faq.question}</p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {faq.answer}
-                </p>
+                {editingFaqId === faq.id ? (
+                  <form
+                    onSubmit={(event) => faqUpdateSubmit(event, faq.id)}
+                    className="space-y-3"
+                  >
+                    <Input
+                      name="question"
+                      defaultValue={faq.question}
+                      aria-label="Pregunta frecuente"
+                      required
+                    />
+                    <Textarea
+                      name="answer"
+                      defaultValue={faq.answer}
+                      aria-label="Respuesta frecuente"
+                      rows={3}
+                      required
+                    />
+                    <div className="flex gap-2">
+                      <Button type="submit" size="sm" disabled={isPending}>
+                        Guardar cambios
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditingFaqId(null)}
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold">{faq.question}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        {faq.answer}
+                      </p>
+                    </div>
+                    {canManage ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setEditingFaqId(faq.id)}
+                      >
+                        Editar
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
               </div>
             ))}
             {!data.faqs.length ? (

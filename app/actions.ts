@@ -332,6 +332,59 @@ export async function createService(input: {
   });
 }
 
+export async function updateService(input: {
+  clinicId: string;
+  serviceId: string;
+  name: string;
+  category: string;
+  durationMinutes: number;
+  pricePesos: number;
+  description?: string;
+}): Promise<ActionResult> {
+  return actionResult(async () => {
+    await ensureDatabase();
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    if (
+      input.name.trim().length < 3 ||
+      input.durationMinutes < 10 ||
+      input.pricePesos < 0
+    )
+      throw new Error('Revisa el nombre, duración y precio del servicio.');
+    const service = await env.DB.prepare(
+      'SELECT id FROM services WHERE id = ? AND clinic_id = ?',
+    )
+      .bind(input.serviceId, input.clinicId)
+      .first();
+    if (!service) throw new Error('No se encontró el servicio.');
+    await env.DB.batch([
+      env.DB.prepare(
+        'UPDATE services SET name = ?, category = ?, description = ?, duration_minutes = ?, price_cents = ? WHERE id = ? AND clinic_id = ?',
+      ).bind(
+        input.name.trim(),
+        input.category.trim() || 'General',
+        input.description?.trim() || null,
+        Math.round(input.durationMinutes),
+        Math.round(input.pricePesos * 100),
+        input.serviceId,
+        input.clinicId,
+      ),
+      auditStatement(
+        input.clinicId,
+        access.user.email,
+        'update',
+        'service',
+        input.serviceId,
+        { name: input.name.trim() },
+      ),
+    ]);
+    revalidatePath('/app');
+    return { ok: true, message: 'Servicio actualizado.' };
+  });
+}
+
 export async function createFaq(input: {
   clinicId: string;
   question: string;
@@ -358,6 +411,46 @@ export async function createFaq(input: {
     });
     revalidatePath('/app');
     return { ok: true, message: 'Respuesta frecuente agregada.' };
+  });
+}
+
+export async function updateFaq(input: {
+  clinicId: string;
+  faqId: string;
+  question: string;
+  answer: string;
+}): Promise<ActionResult> {
+  return actionResult(async () => {
+    await ensureDatabase();
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    const question = input.question.trim();
+    const answer = input.answer.trim();
+    if (question.length < 5 || answer.length < 5)
+      throw new Error('Escribe una pregunta y una respuesta completas.');
+    const faq = await env.DB.prepare(
+      'SELECT id FROM faq_items WHERE id = ? AND clinic_id = ?',
+    )
+      .bind(input.faqId, input.clinicId)
+      .first();
+    if (!faq) throw new Error('No se encontró la respuesta frecuente.');
+    await env.DB.batch([
+      env.DB.prepare(
+        'UPDATE faq_items SET question = ?, answer = ? WHERE id = ? AND clinic_id = ?',
+      ).bind(question, answer, input.faqId, input.clinicId),
+      auditStatement(
+        input.clinicId,
+        access.user.email,
+        'update',
+        'faq',
+        input.faqId,
+        { question },
+      ),
+    ]);
+    revalidatePath('/app');
+    return { ok: true, message: 'Respuesta frecuente actualizada.' };
   });
 }
 
@@ -516,6 +609,78 @@ export async function createProfessional(input: {
     await env.DB.batch(statements);
     revalidatePath('/app');
     return { ok: true, message: 'Profesional agregado a la agenda.' };
+  });
+}
+
+export async function updateProfessional(input: {
+  clinicId: string;
+  professionalId: string;
+  name: string;
+  email?: string;
+  specialty?: string;
+  locationId?: string;
+}): Promise<ActionResult> {
+  return actionResult(async () => {
+    const access = await requireClinicAccess(input.clinicId, [
+      'owner',
+      'admin',
+    ]);
+    const name = input.name.trim();
+    if (name.length < 3)
+      throw new Error('Escribe el nombre del profesional.');
+    if (input.locationId) {
+      const location = await env.DB.prepare(
+        'SELECT id FROM locations WHERE id = ? AND clinic_id = ? AND active = 1',
+      )
+        .bind(input.locationId, input.clinicId)
+        .first();
+      if (!location) throw new Error('La sucursal seleccionada no es válida.');
+    }
+    const doctor = await env.DB.prepare(
+      'SELECT id FROM doctors WHERE id = ? AND clinic_id = ? AND active = 1',
+    )
+      .bind(input.professionalId, input.clinicId)
+      .first();
+    if (!doctor) throw new Error('No se encontró el profesional.');
+    const statements = [
+      env.DB.prepare(
+        'UPDATE doctors SET name = ?, email = ?, specialty = ? WHERE id = ? AND clinic_id = ?',
+      ).bind(
+        name,
+        input.email?.trim() || null,
+        input.specialty?.trim() || 'Profesional',
+        input.professionalId,
+        input.clinicId,
+      ),
+      env.DB.prepare(
+        'DELETE FROM doctor_locations WHERE doctor_id = ? AND clinic_id = ?',
+      ).bind(input.professionalId, input.clinicId),
+      auditStatement(
+        input.clinicId,
+        access.user.email,
+        'update',
+        'professional',
+        input.professionalId,
+        { name },
+      ),
+    ];
+    if (input.locationId) {
+      statements.splice(
+        2,
+        0,
+        env.DB.prepare(
+          'INSERT INTO doctor_locations (id, clinic_id, doctor_id, location_id, active) VALUES (?, ?, ?, ?, 1)',
+        ).bind(
+          `doctor_location_${crypto.randomUUID()}`,
+          input.clinicId,
+          input.professionalId,
+          input.locationId,
+        ),
+      );
+    }
+    await env.DB.batch(statements);
+    revalidatePath('/app');
+    return { ok: true, message: 'Profesional actualizado.' };
   });
 }
 
