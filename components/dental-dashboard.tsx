@@ -1028,9 +1028,9 @@ function InboxView({
         title="Bandeja de conversaciones"
         description="La IA y tu equipo trabajando en el mismo lugar."
       />
-      <Card className="min-h-[620px] overflow-hidden border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
-        <div className="grid min-h-[620px] md:grid-cols-[290px_minmax(0,1fr)]">
-          <aside className="border-b border-border md:border-b-0 md:border-r">
+      <Card className="h-[calc(100vh-210px)] min-h-[520px] overflow-hidden border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
+        <div className="grid h-full min-h-0 grid-rows-[minmax(0,220px)_minmax(0,1fr)] md:grid-cols-[290px_minmax(0,1fr)] md:grid-rows-1">
+          <aside className="flex min-h-0 flex-col border-b border-border md:border-b-0 md:border-r">
             <div className="border-b p-3">
               <div className="relative">
                 <Search className="absolute left-2.5 top-2 size-4 text-muted-foreground" />
@@ -1041,7 +1041,7 @@ function InboxView({
                 />
               </div>
             </div>
-            <div className="max-h-[555px] overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {conversations.map((conversation) => (
                 <button
                   aria-label={`Abrir conversación con ${conversation.patientName}`}
@@ -1088,7 +1088,7 @@ function InboxView({
               ))}
             </div>
           </aside>
-          <section className="flex min-w-0 flex-col">
+          <section className="flex min-h-0 min-w-0 flex-col">
             <header className="flex items-center gap-3 border-b p-4">
               <div className="grid size-10 place-items-center rounded-full bg-[#dce8ff] text-xs font-bold text-[#405593]">
                 {initials(selected.patientName)}
@@ -1115,7 +1115,7 @@ function InboxView({
                 />
               </div>
             </header>
-            <div className="flex-1 space-y-3 overflow-y-auto bg-[#f8fbfa] p-4 md:p-6">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#f8fbfa] p-4 md:p-6">
               {selected.messages.map((item) => (
                 <div
                   key={item.id}
