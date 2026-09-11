@@ -661,6 +661,8 @@ function PageHeading({
   );
 }
 
+type AgendaRange = 'day' | 'week' | 'month';
+
 function AgendaView({
   data,
   onOpenInbox,
@@ -674,41 +676,100 @@ function AgendaView({
   runAction: (operation: () => Promise<ActionResult>) => void;
   isPending: boolean;
 }) {
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: data.clinic.timezone,
-  }).format(new Date());
-  const todayAppointments = data.appointments.filter(
-    (item) =>
-      new Intl.DateTimeFormat('en-CA', {
-        timeZone: data.clinic.timezone,
-      }).format(new Date(item.startsAt)) === today,
-  );
-  const confirmed = todayAppointments.filter(
+  const [agendaRange, setAgendaRange] = useState<AgendaRange>('day');
+  const todayKey = localDateKey(new Date(), data.clinic.timezone);
+  const todayDate = new Date(`${todayKey}T12:00:00Z`);
+  const rangeStartDate = new Date(todayDate);
+  if (agendaRange === 'week') {
+    rangeStartDate.setUTCDate(
+      rangeStartDate.getUTCDate() - rangeStartDate.getUTCDay(),
+    );
+  } else if (agendaRange === 'month') {
+    rangeStartDate.setUTCDate(1);
+  }
+  const rangeEndDate = new Date(rangeStartDate);
+  if (agendaRange === 'day') {
+    rangeEndDate.setUTCDate(rangeEndDate.getUTCDate() + 1);
+  } else if (agendaRange === 'week') {
+    rangeEndDate.setUTCDate(rangeEndDate.getUTCDate() + 7);
+  } else {
+    rangeEndDate.setUTCMonth(rangeEndDate.getUTCMonth() + 1, 1);
+  }
+  const rangeStartKey = utcDateKey(rangeStartDate);
+  const rangeEndKey = utcDateKey(rangeEndDate);
+  const visibleAppointments = data.appointments.filter((item) => {
+    const appointmentKey = localDateKey(item.startsAt, data.clinic.timezone);
+    return appointmentKey >= rangeStartKey && appointmentKey < rangeEndKey;
+  });
+  const confirmed = visibleAppointments.filter(
     (item) => item.status === 'confirmed',
   ).length;
-  const pending = todayAppointments.filter(
+  const pending = visibleAppointments.filter(
     (item) => item.status === 'pending',
   ).length;
-  return (
-    <>
-      <PageHeading
-        eyebrow={new Intl.DateTimeFormat('es-MX', {
+  const rangeLabel =
+    agendaRange === 'day'
+      ? new Intl.DateTimeFormat('es-MX', {
           timeZone: data.clinic.timezone,
           weekday: 'long',
           day: 'numeric',
           month: 'long',
-        }).format(new Date())}
+        }).format(todayDate)
+      : agendaRange === 'week'
+        ? `Semana del ${formatRangeDate(rangeStartDate, data.clinic.timezone)} al ${formatRangeDate(new Date(rangeEndDate.getTime() - 86400000), data.clinic.timezone)}`
+        : new Intl.DateTimeFormat('es-MX', {
+            timeZone: data.clinic.timezone,
+            month: 'long',
+            year: 'numeric',
+          }).format(todayDate);
+  const rangeName =
+    agendaRange === 'day'
+      ? 'hoy'
+      : agendaRange === 'week'
+        ? 'esta semana'
+        : 'este mes';
+  const periodTitle =
+    agendaRange === 'day'
+      ? 'Agenda de hoy'
+      : agendaRange === 'week'
+        ? 'Agenda de la semana'
+        : 'Agenda del mes';
+  return (
+    <>
+      <PageHeading
+        eyebrow={rangeLabel}
         title={`Hola, ${firstName(data.saas.user.displayName)}`}
-        description={`Tu agenda está al día. Tienes ${todayAppointments.length} citas programadas hoy.`}
+        description={`Tu agenda está al día. Tienes ${visibleAppointments.length} citas programadas ${rangeName}.`}
         action={
           <div className="flex items-center gap-2 rounded-xl border bg-card p-1">
-            <Button variant="ghost" size="sm">
+            <Button
+              type="button"
+              variant={agendaRange === 'day' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={agendaRange === 'day' ? 'shadow-sm' : undefined}
+              aria-pressed={agendaRange === 'day'}
+              onClick={() => setAgendaRange('day')}
+            >
               Día
             </Button>
-            <Button variant="secondary" size="sm" className="shadow-sm">
+            <Button
+              type="button"
+              variant={agendaRange === 'week' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={agendaRange === 'week' ? 'shadow-sm' : undefined}
+              aria-pressed={agendaRange === 'week'}
+              onClick={() => setAgendaRange('week')}
+            >
               Semana
             </Button>
-            <Button variant="ghost" size="sm">
+            <Button
+              type="button"
+              variant={agendaRange === 'month' ? 'secondary' : 'ghost'}
+              size="sm"
+              className={agendaRange === 'month' ? 'shadow-sm' : undefined}
+              aria-pressed={agendaRange === 'month'}
+              onClick={() => setAgendaRange('month')}
+            >
               Mes
             </Button>
           </div>
@@ -716,14 +777,20 @@ function AgendaView({
       />
       <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric
-          value={String(todayAppointments.length)}
-          label="Citas de hoy"
+          value={String(visibleAppointments.length)}
+          label={
+            agendaRange === 'day'
+              ? 'Citas de hoy'
+              : agendaRange === 'week'
+                ? 'Citas de la semana'
+                : 'Citas del mes'
+          }
           detail="Agenda activa"
         />
         <Metric
           value={String(confirmed)}
           label="Confirmadas"
-          detail={`${todayAppointments.length ? Math.round((confirmed / todayAppointments.length) * 100) : 0}% de la agenda`}
+          detail={`${visibleAppointments.length ? Math.round((confirmed / visibleAppointments.length) * 100) : 0}% de la agenda`}
         />
         <Metric
           value={String(pending)}
@@ -736,21 +803,17 @@ function AgendaView({
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Card className="border-0 shadow-[0_12px_40px_rgb(26_52_45/6%)]">
           <CardHeader className="border-b border-border/70 pb-4">
-            <CardTitle>Agenda de hoy</CardTitle>
+            <CardTitle>{periodTitle}</CardTitle>
             <CardDescription>
               Todos los doctores · horario local
             </CardDescription>
-            <CardAction>
-              <Button variant="ghost" size="sm">
-                Ver calendario <ChevronRight data-icon="inline-end" />
-              </Button>
-            </CardAction>
           </CardHeader>
           <CardContent className="divide-y divide-border/70">
-            {todayAppointments.map((appointment) => (
+            {visibleAppointments.map((appointment) => (
               <AppointmentRow
                 key={appointment.id}
                 appointment={appointment}
+                showDate={agendaRange !== 'day'}
                 onEdit={() => onEditAppointment(appointment)}
                 onStatus={(status) =>
                   runAction(() => setAppointmentStatus(appointment.id, status))
@@ -758,9 +821,13 @@ function AgendaView({
                 disabled={isPending}
               />
             ))}
-            {!todayAppointments.length ? (
+            {!visibleAppointments.length ? (
               <p className="py-10 text-center text-sm text-muted-foreground">
-                No hay citas para este día.
+                {agendaRange === 'day'
+                  ? 'No hay citas para este día.'
+                  : agendaRange === 'week'
+                    ? 'No hay citas para esta semana.'
+                    : 'No hay citas para este mes.'}
               </p>
             ) : null}
           </CardContent>
@@ -810,11 +877,13 @@ function Metric({
 
 function AppointmentRow({
   appointment,
+  showDate = false,
   onEdit,
   onStatus,
   disabled,
 }: {
   appointment: AppointmentRecord;
+  showDate?: boolean;
   onEdit: () => void;
   onStatus: (status: string) => void;
   disabled: boolean;
@@ -822,6 +891,11 @@ function AppointmentRow({
   return (
     <div className="grid grid-cols-[64px_1fr] items-center gap-3 py-4 sm:grid-cols-[78px_42px_1fr_auto_auto]">
       <div>
+        {showDate ? (
+          <p className="text-[11px] text-muted-foreground">
+            {formatDate(appointment.startsAt)}
+          </p>
+        ) : null}
         <p className="text-sm font-bold tabular-nums">
           {formatTime(appointment.startsAt)}
         </p>
@@ -4602,6 +4676,21 @@ function defaultAppointmentDate(timeZone: string) {
   const value = new Date(`${today}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + 1);
   return `${value.toISOString().slice(0, 10)}T10:00`;
+}
+function localDateKey(value: string | Date, timeZone: string) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone }).format(
+    value instanceof Date ? value : new Date(value),
+  );
+}
+function utcDateKey(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+function formatRangeDate(value: Date, timeZone: string) {
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone,
+    day: 'numeric',
+    month: 'short',
+  }).format(value);
 }
 function localDateTimeValue(value: string, timeZone: string) {
   const parts = new Intl.DateTimeFormat('en-CA', {
